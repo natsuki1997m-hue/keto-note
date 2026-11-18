@@ -154,11 +154,14 @@ h1.pageTitle{font-size:24px;margin:18px 0 4px}
 .quick button{min-height:40px;padding:0 12px;border-radius:10px;border:1px solid var(--line);background:var(--bg);font-weight:700;font-size:15px}
 .prev{margin-bottom:10px}
 
-.irow{display:grid;grid-template-columns:1fr 92px 44px;gap:8px;align-items:center;margin-bottom:8px}
+.irow{display:grid;grid-template-columns:1fr 84px 44px 44px;gap:8px;align-items:center;margin-bottom:8px}
 .irow .nm{font-weight:600;overflow-wrap:anywhere;font-size:16px}
 .irow input{min-height:46px;width:100%;min-width:0;padding:0 8px;border-radius:10px;border:1px solid var(--line);background:var(--bg);text-align:right;font-variant-numeric:tabular-nums}
+.irow button[data-sw]{color:var(--pri);border-color:var(--pri)}
 .irow button{min-height:44px;border-radius:10px;border:1px solid var(--line);background:none;color:var(--danger);font-size:18px}
 
+.chk{display:flex;align-items:center;gap:12px;min-height:48px;margin:0 0 12px;font-weight:700}
+.chk input{width:26px;height:26px;accent-color:var(--pri)}
 .toast{position:fixed;left:50%;top:14px;transform:translateX(-50%);z-index:40;background:var(--ink);color:var(--bg);padding:12px 18px;border-radius:14px;font-weight:700;font-size:16px;max-width:90%;text-align:center;box-shadow:0 6px 20px rgba(0,0,0,.25)}
 [hidden]{display:none!important}
 @media (prefers-reduced-motion: no-preference){
@@ -273,7 +276,7 @@ function viewToday(){
       }
       out+='</div>';
     });
-    out+='<div class="mealfoot"><button class="btn primary" data-act="add" data-meal="'+m[0]+'">＋ '+m[1]+'に追加</button>'+(list.length?'<button class="btn ghost" data-act="saveMy" data-meal="'+m[0]+'">マイフードに登録</button>':'')+'</div></section>';
+    out+='<div class="mealfoot"><button class="btn primary" data-act="add" data-meal="'+m[0]+'">＋ 食品を追加</button><button class="btn ghost" data-act="newDishMeal" data-meal="'+m[0]+'">＋ 料理をつくる</button>'+(list.length?'<button class="btn ghost" data-act="saveMy" data-meal="'+m[0]+'">マイフードに登録</button>':'')+'</div></section>';
   });
   return out;
 }
@@ -412,19 +415,22 @@ function openPicker(opts){
   function showPick(){
     if(!st.sel){pick.hidden=true;return}
     var isDish=st.sel.kind==='dish', ref=st.sel.ref;
-    var unit=isDish?'人前':'g', def=isDish?1:(st.sel.last||100);
+    var unit=isDish?'人前':'g', def=isDish?1:(st.sel.last||opts.defaultG||100);
     pick.hidden=false;
-    pick.innerHTML='<div class="head"><b>'+esc(isDish?ref.name:ref.n)+'</b><button class="btn sm" data-clear>やめる</button></div><div class="amount"><input id="amt" inputmode="decimal" value="'+def+'" aria-label="'+(isDish?'何人前':'グラム')+'"><span>'+unit+'</span></div>'+(isDish?'':'<div class="quick">'+[5,10,20,50,100].map(function(n){return '<button data-q="'+n+'">'+n+'</button>'}).join('')+'</div>')+'<div class="prev nums" id="prev"></div><button class="btn primary big" data-add>追加する</button>';
+    pick.innerHTML='<div class="head"><b>'+esc(isDish?ref.name:ref.n)+'</b><button class="btn sm" data-clear>やめる</button></div><div class="amount"><input id="amt" inputmode="decimal" value="'+def+'" aria-label="'+(isDish?'何人前':'グラム')+'"><span>'+unit+'</span></div>'+(isDish?'':'<div class="quick">'+[5,10,20,50,100].map(function(n){return '<button data-q="'+n+'">'+n+'</button>'}).join('')+'</div>')+'<div class="prev nums" id="prev"></div><button class="btn primary big" data-add>追加する</button>'+(isDish&&opts.onTweak?'<button class="btn big" data-tweak style="margin-top:8px">材料を変えて追加</button>':'');
     var a=$('#amt',pick); a.focus(); a.select();
     function upd(){var v=toNum(a.value);if(!(v>0)){$('#prev',pick).innerHTML='<span>数字を入れてください</span>';return}
       var t=isDish?dishT(ref.items,v):itemT({g:v,per:ref.per},1); $('#prev',pick).innerHTML=numsHtml(t)}
     a.oninput=upd; upd();
     $$('[data-q]',pick).forEach(function(b){b.onclick=function(){a.value=b.dataset.q;upd();a.focus()}});
     $('[data-clear]',pick).onclick=function(){st.sel=null;showPick();paint()};
+    var tw=$('[data-tweak]',pick);
+    if(tw)tw.onclick=function(){var v=toNum(a.value);if(!(v>0))v=1;sh.close();opts.onTweak(ref,v)};
     $('[data-add]',pick).onclick=function(){
       var v=toNum(a.value); if(!(v>0)){toast('数字を入れてください');a.focus();return}
       if(isDish)opts.onPick('dish',ref,v); else {pushRecent(ref);save();opts.onPick('food',ref,v)}
       toast((isDish?ref.name:ref.n)+' を追加しました');
+      if(opts.once){sh.close();return}
       st.sel=null; showPick(); st.q=''; q.value=''; paint(); if(st.tab==='search')q.focus();
     };
   }
@@ -454,38 +460,76 @@ function openCustom(name,done){
   };
 }
 
-/* ---------- マイフードの編集 ---------- */
-function openDish(dish,prefill){
-  var items=(dish?dish.items:(prefill||[])).map(function(i){return {n:i.n,g:i.g,per:i.per}});
-  var sh=openSheet('<div class="sheetTop"><h2>'+(dish?'マイフードをなおす':'新しいマイフード')+'</h2><button class="btn sm" data-x>閉じる</button></div><div class="sheetBody"><label class="field"><span>名前</span><input id="dn" value="'+esc(dish?dish.name:'')+'" placeholder="例：オムレツ"></label><div id="il"></div><button class="btn big" data-addi style="margin-bottom:12px">＋ 材料を追加</button><div class="card"><div class="cap">1人前の合計（ケトン比 <b id="dr"></b>）</div><div class="nums" id="dt" style="margin-top:4px"></div></div><button class="btn primary big" data-save>保存する</button><div id="delwrap" style="margin-top:10px"></div></div>');
+/* ---------- 料理（材料のまとまり）の編集 ----------
+   マイフードの登録・直し、食事に入れる料理づくり、食事に入れた料理の中身直しで共通に使う。
+   o: {title,note,name,items,saveLabel,alsoMy,asNew,onSave(name,items,alsoMy),onDelete,delLabel} */
+function copyItems(items){return items.map(function(i){return {n:i.n,g:i.g,per:i.per}})}
+function openDishEditor(o){
+  var items=copyItems(o.items||[]);
+  var sh=openSheet('<div class="sheetTop"><h2>'+esc(o.title)+'</h2><button class="btn sm" data-x>閉じる</button></div><div class="sheetBody">'+
+    (o.note?'<p class="note" style="margin:0 0 10px">'+o.note+'</p>':'')+
+    '<label class="field"><span>料理の名前</span><input id="dn" value="'+esc(o.name||'')+'" placeholder="例：オムレツ"></label><div id="il"></div>'+
+    '<button class="btn big" data-addi style="margin-bottom:12px">＋ 材料を追加</button>'+
+    '<div class="card"><div class="cap">合計（ケトン比 <b id="dr"></b>）</div><div class="nums" id="dt" style="margin-top:4px"></div></div>'+
+    (o.alsoMy?'<label class="chk"><input type="checkbox" id="am"><span>マイフードにも登録する</span></label>':'')+
+    '<button class="btn primary big" data-save>'+esc(o.saveLabel||'保存する')+'</button><div id="extra" style="margin-top:10px;display:grid;gap:10px"></div></div>');
   var b=sh.box; $('[data-x]',b).onclick=sh.close;
   function tot(){var t=dishT(items,1);$('#dt',b).innerHTML=numsHtml(t);$('#dr',b).textContent=ratioTxt(t)+' : 1'}
   function paintItems(){
-    $('#il',b).innerHTML=items.length?items.map(function(it,i){return '<div class="irow"><div class="nm">'+esc(it.n)+'</div><input data-gi="'+i+'" inputmode="decimal" value="'+it.g+'" aria-label="'+esc(it.n)+'のグラム"><button data-rm="'+i+'" aria-label="'+esc(it.n)+'を外す">✕</button></div>'}).join(''):'<p class="note">材料がまだありません。</p>';
+    $('#il',b).innerHTML=items.length?items.map(function(it,i){return '<div class="irow"><div class="nm">'+esc(it.n)+'</div><input data-gi="'+i+'" inputmode="decimal" value="'+it.g+'" aria-label="'+esc(it.n)+'のグラム"><button data-sw="'+i+'" aria-label="'+esc(it.n)+'を別の食品に入れかえる">⇄</button><button data-rm="'+i+'" aria-label="'+esc(it.n)+'を外す">✕</button></div>'}).join('')+'<p class="note" style="margin:-2px 0 10px">⇄ は別の食品への入れかえ、✕ は外すボタンです。</p>':'<p class="note">材料がまだありません。</p>';
     tot();
   }
   b.addEventListener('input',function(e){var i=e.target.dataset.gi;if(i!=null){var v=toNum(e.target.value);items[+i].g=v>=0?v:0;tot()}});
-  b.addEventListener('click',function(e){var rm=e.target.closest('[data-rm]');if(rm){items.splice(+rm.dataset.rm,1);paintItems()}});
+  b.addEventListener('click',function(e){
+    var rm=e.target.closest('[data-rm]'); if(rm){items.splice(+rm.dataset.rm,1);paintItems();return}
+    var sw=e.target.closest('[data-sw]');
+    if(sw){var i=+sw.dataset.sw;openPicker({mode:'item',once:true,defaultG:items[i].g,title:items[i].n+' を入れかえる',onPick:function(kind,f,g){items[i]={n:f.n,g:g,per:f.per};paintItems()}})}
+  });
   $('[data-addi]',b).onclick=function(){openPicker({mode:'item',title:'材料を選ぶ',onPick:function(kind,f,g){items.push({n:f.n,g:g,per:f.per});paintItems()}})};
   $('[data-save]',b).onclick=function(){
     var n=$('#dn',b).value.trim();
-    if(!n){toast('名前を入れてください');$('#dn',b).focus();return}
+    if(!n){toast('料理の名前を入れてください');$('#dn',b).focus();return}
     if(!items.length){toast('材料を1つ以上入れてください');return}
     if(items.some(function(i){return !(i.g>0)})){toast('グラムが0の材料があります');return}
-    if(dish){dish.name=n;dish.items=items}else S.my.push({id:uid(),name:n,items:items});
-    save();sh.close();render();toast('保存しました');
+    var am=$('#am',b);
+    sh.close(); o.onSave(n,copyItems(items),!!(am&&am.checked));
   };
-  if(dish){
-    var w=$('#delwrap',b), btn=h('<button class="btn danger big">このマイフードを削除</button>'); w.appendChild(btn); var armed=false;
-    btn.onclick=function(){if(!armed){armed=true;btn.textContent='もう一度押すと削除します';setTimeout(function(){armed=false;btn.textContent='このマイフードを削除'},3000);return}
-      S.my=S.my.filter(function(x){return x!==dish});save();sh.close();render();toast('削除しました')};
+  function armBtn(label,cls,fn,confirmTxt){
+    var btn=h('<button class="btn '+cls+' big">'+label+'</button>'), armed=false; $('#extra',b).appendChild(btn);
+    btn.onclick=function(){if(confirmTxt&&!armed){armed=true;btn.textContent=confirmTxt;setTimeout(function(){armed=false;btn.textContent=label},3000);return}fn()};
   }
+  if(o.asNew)armBtn('この内容を新しいマイフードとして保存','ghost',function(){
+    var n=$('#dn',b).value.trim(); if(!n){toast('料理の名前を入れてください');return}
+    if(!items.length){toast('材料を1つ以上入れてください');return}
+    S.my.push({id:uid(),name:n,items:copyItems(items)});save();render();toast('マイフードに登録しました')});
+  if(o.onDelete)armBtn(esc(o.delLabel||'削除'),'danger',function(){sh.close();o.onDelete()},'もう一度押すと削除します');
   paintItems();
+}
+/* マイフードの登録・直し */
+function openDish(dish,prefill){
+  openDishEditor({title:dish?'マイフードをなおす':'新しいマイフード',name:dish?dish.name:'',items:dish?dish.items:(prefill||[]),
+    onSave:function(n,items){if(dish){dish.name=n;dish.items=items}else S.my.push({id:uid(),name:n,items:items});save();render();toast('保存しました')},
+    onDelete:dish?function(){S.my=S.my.filter(function(x){return x!==dish});save();render();toast('削除しました')}:null,delLabel:'このマイフードを削除'});
+}
+/* 食事に入れる料理を、名前からつくる（マイフードから材料を変えて入れる場合もここ） */
+function openNewDish(meal,items,name){
+  openDishEditor({title:mealName(meal)+'の料理をつくる',name:name||'',items:items||[],saveLabel:mealName(meal)+'に入れる',alsoMy:true,
+    note:'料理の名前をつけて、材料を入れてください。',
+    onSave:function(n,its,also){addDish(meal,{name:n,items:its},1);if(also){S.my.push({id:uid(),name:n,items:copyItems(its)});save()}toast(n+' を'+mealName(meal)+'に入れました')}});
+}
+/* 食事に入れた料理の中身を、その日の分だけ直す（マイフードの元の登録は変わらない） */
+function openDishEntry(meal,e){
+  var its=e.items.map(function(i){return {n:i.n,g:+(i.g*(e.mult||1)).toFixed(1),per:i.per}});
+  openDishEditor({title:'この料理の中身を直す',name:e.name,items:its,saveLabel:'この内容に変更',asNew:true,
+    note:'ここで直しても、マイフードの元の登録は変わりません。この食事の分だけ変わります。',
+    onSave:function(n,items){e.name=n;e.items=items;e.mult=1;ensureDay(D);save();render();toast('変更しました')},
+    onDelete:function(){var d=ensureDay(D);d[meal]=d[meal].filter(function(x){return x.id!==e.id});save();render()},delLabel:'この料理を記録から削除'});
 }
 
 /* ---------- 食事の記録を直す ---------- */
 function openEntry(meal,id){
   var day=getDay(D), list=day[meal], e=list.filter(function(x){return x.id===id})[0]; if(!e)return;
+  if(e.kind==='d'){openDishEntry(meal,e);return}
   var isF=e.kind==='f';
   var sh=openSheet('<div class="sheetTop"><h2>'+esc(e.name)+'</h2><button class="btn sm" data-x>閉じる</button></div><div class="sheetBody"><div class="pick" style="border:0;padding:0 0 10px;background:none"><div class="amount"><input id="ea" inputmode="decimal" value="'+(isF?e.g:e.mult)+'"><span>'+(isF?'g':'人前')+'</span></div><div class="prev nums" id="ep"></div></div><button class="btn primary big" data-save>変更を保存</button><button class="btn danger big" data-del style="margin-top:10px">この記録を削除</button></div>',true);
   var b=sh.box; $('[data-x]',b).onclick=sh.close;
@@ -516,7 +560,9 @@ function doImport(text){
 $('#app').addEventListener('click',function(e){
   var b=e.target.closest('[data-act]'); if(!b)return;
   var act=b.dataset.act, m=b.dataset.meal, id=b.dataset.id;
-  if(act==='add')openPicker({mode:'meal',title:mealName(m)+'に追加',onPick:function(kind,obj,v){if(kind==='dish')addDish(m,obj,v);else addFood(m,obj,v)}});
+  if(act==='add')openPicker({mode:'meal',title:mealName(m)+'に追加',onPick:function(kind,obj,v){if(kind==='dish')addDish(m,obj,v);else addFood(m,obj,v)},
+    onTweak:function(dish,v){openNewDish(m,dish.items.map(function(i){return {n:i.n,g:+(i.g*v).toFixed(1),per:i.per}}),dish.name)}});
+  else if(act==='newDishMeal')openNewDish(m,[],'');
   else if(act==='edit')openEntry(m,id);
   else if(act==='toggle'){open[id]=!open[id];render()}
   else if(act==='saveMy'){
