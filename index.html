@@ -214,6 +214,8 @@ function load(){
   return blank();
 }
 var S=load();
+/* 数字がすべて0の自分の食品は、入力ミスなので取り除く */
+(function(){var n=S.custom.length;S.custom=S.custom.filter(function(c){return c.per&&(c.per.k||c.per.p||c.per.f||c.per.c)});S.recent=S.recent.filter(function(r){return !r.custom||S.custom.some(function(c){return c.id===r.id})});if(n!==S.custom.length){try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){}}})();
 function save(){try{localStorage.setItem(KEY,JSON.stringify(S))}catch(e){storageOK=false;$('#banner').hidden=false}}
 
 /* ---------- 小道具 ---------- */
@@ -340,6 +342,15 @@ function tier(f,c){
   for(i=0;i<w.length;i++)if(w[i].indexOf(c)===0)return 2;
   return f.nk.indexOf(c)>=0?3:4;
 }
+/* 「卵 85g」「卵85」「85g 卵」のように、食品名とグラムを一緒に打っても分けて読む */
+function parseQ(q){
+  var s=String(q).normalize('NFKC').trim(), m;
+  m=s.match(/^(.*?)\s*(\d+(?:\.\d+)?)\s*(?:g|グラム)?$/i);
+  if(m&&m[1].trim()&&parseFloat(m[2])>0)return {text:m[1].trim(),g:parseFloat(m[2])};
+  m=s.match(/^(\d+(?:\.\d+)?)\s*(?:g|グラム)?\s+(.+)$/i);
+  if(m&&parseFloat(m[1])>0)return {text:m[2].trim(),g:parseFloat(m[1])};
+  return {text:s,g:0};
+}
 function search(q,grp){
   var toks=q.split(/[\s　]+/).filter(Boolean).map(norm).filter(Boolean);
   if(!toks.length&&!grp)return [];
@@ -368,7 +379,7 @@ function pushRecent(f){
 
 /* mode: 'meal'（食事に追加・マイフードも選べる）/ 'item'（材料を選ぶだけ）  onPick(kind,obj,value) */
 function openPicker(opts){
-  var st={tab:'search',q:'',grp:0,sel:null,list:[]};
+  var st={tab:'search',q:'',grp:0,sel:null,list:[],qg:0};
   var tabsHtml=opts.mode==='meal'?'<div class="tabs" role="tablist"><button role="tab" data-t="search" aria-selected="true">食品を探す</button><button role="tab" data-t="my" aria-selected="false">マイフード</button></div>':'';
   var sh=openSheet('<div class="sheetTop"><h2>'+esc(opts.title)+'</h2><button class="btn primary sm" data-x>完了</button></div>'+tabsHtml+
     '<div class="search"><input type="search" id="q" placeholder="食品名で探す（例：卵、バター、こまつな）" autocomplete="off" enterkeyhint="search"></div>'+
@@ -385,9 +396,11 @@ function openPicker(opts){
       if(!S.my.length)html='<p class="hint">まだマイフードがありません。食事を入れたあと「マイフードに登録」を押すと作れます。</p>';
       S.my.forEach(function(d,i){var t=dishT(d.items,1);html+='<button class="row" data-i="'+i+'" aria-pressed="'+(st.sel&&st.sel.ref===d?'true':'false')+'"><div class="nm">'+esc(d.name)+'</div><div class="per">'+perHtml(t)+'</div></button>'});
     }else{
-      if(st.q.trim()||st.grp){
-        st.list=search(st.q,st.grp);
-        html=st.list.length?st.list.map(foodRow).join(''):'<p class="hint">見つかりません。ひらがなでも探せます（例：「小松菜」→「こまつな」）。</p>';
+      var pq=parseQ(st.q); st.qg=pq.g;
+      if(pq.text||st.grp){
+        st.list=search(pq.text,st.grp);
+        html=st.list.length?st.list.map(foodRow).join(''):'<p class="hint">見つかりません。食品名だけで探してみてください（例：「卵」「こまつな」）。</p>';
+        if(pq.g)html='<p class="hint"><b>'+pq.g+'g</b> で入れます。食品をタップしてください。</p>'+html;
       }else{
         st.list=S.recent.map(function(r){return {id:r.id,n:r.n,per:r.per,custom:r.custom}});
         html=st.list.length?'<p class="hint">最近使った食品</p>'+st.list.map(foodRow).join(''):'<p class="hint">食品名を入れてください。例：卵　バター　やし油　こまつな</p>';
@@ -421,8 +434,8 @@ function openPicker(opts){
     var t=e.target.closest('[data-t]');
     if(t){st.tab=t.dataset.t;st.sel=null;showPick();$$('[data-t]',box).forEach(function(x){x.setAttribute('aria-selected',x===t?'true':'false')});var s=st.tab==='search';$('.search',box).hidden=!s;chips.hidden=!s;paint();return}
     var r=e.target.closest('.row');
-    if(r){var item=st.list[+r.dataset.i];if(!item)return;st.sel=st.tab==='my'?{kind:'dish',ref:item}:{kind:'food',ref:item};showPick();paint();return}
-    if(e.target.closest('[data-custom]')){openCustom(q.value,function(f){st.sel={kind:'food',ref:f};st.tab='search';showPick();paint()})}
+    if(r){var item=st.list[+r.dataset.i];if(!item)return;st.sel=st.tab==='my'?{kind:'dish',ref:item}:{kind:'food',ref:item,last:st.qg};showPick();paint();return}
+    if(e.target.closest('[data-custom]')){openCustom(parseQ(q.value).text,function(f){st.sel={kind:'food',ref:f,last:st.qg};st.tab='search';showPick();paint()})}
   });
   paint(); setTimeout(function(){q.focus()},50);
 }
@@ -434,6 +447,7 @@ function openCustom(name,done){
   $('[data-save]',b).onclick=function(){
     var n=$('#cn',b).value.trim(), f=toNum($('#cf',b).value)||0, c=toNum($('#cc',b).value)||0, p=toNum($('#cp',b).value)||0, k=toNum($('#ck',b).value);
     if(!n){toast('名前を入れてください');return}
+    if([$('#cf',b).value,$('#cc',b).value,$('#cp',b).value,$('#ck',b).value].every(function(v){return !String(v).trim()})){toast('栄養の数字を入れてください（100gあたり）');return}
     if(!(k>=0))k=Math.round(p*4+f*9+c*4);
     var food={id:'c_'+uid(),n:n,per:{k:k,p:p,f:f,c:c},custom:true};
     S.custom.push({id:food.id,n:n,per:food.per}); save(); sh.close(); toast('登録しました'); if(done)done(food);
