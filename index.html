@@ -544,7 +544,7 @@ function openCustom(name,done){
       if(bad){toast('名前が空の食品があります');return}
       if(!made.length){toast('登録する食品がありません');return}
       var last=null;
-      made.forEach(function(m){var o=m[1];last=addCustomFood(m[0],o.base,o.f,o.c,o.p,o.k,o.base!==100?o.base:0)});
+      var foods=made.map(function(m){var o=m[1];return addCustomFood(m[0],o.base,o.f,o.c,o.p,o.k,o.base!==100?o.base:0)});foods.slice().reverse().forEach(pushRecent);last=foods[0];
       save();sh.close();toast(made.length+'個を登録しました');if(done)done(last);
     };
   };
