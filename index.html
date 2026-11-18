@@ -476,46 +476,151 @@ function parseNutri(t){
   o.k=g(new RegExp('(?:エネルギー|カロリー)[^0-9\\n]{0,10}?'+N))||g(new RegExp(N+'\\s*kcal','i'));
   return o;
 }
-/* 複数の食品がまとめて貼られても、食品ごとに分けて読み取る */
-var LABELRE=/カロリー|エネルギー|kcal|たんぱく|タンパク|蛋白|プロテイン|脂質|脂肪|糖質|炭水化物|食物繊維/i;
+/* 複数の食品がまとめて貼られても、食品ごとに分けて読み取る（箇条書き・表・改行・1行つづきなど）*/
+var KW={
+  fib:'食物繊維|fiber|fibre',
+  k:'エネルギー|カロリー|calories?|energy|kcal',
+  f:'(?<![飽和価])(?:脂質|脂肪(?!酸)|fat|lipids?)|(?<![A-Za-zァ-ヶー])F(?=\\s*\\d)',
+  p:'たんぱく質|タンパク質|蛋白質|たんぱく|タンパク|プロテイン|protein|(?<![A-Za-zァ-ヶー])P(?=\\s*\\d)',
+  car:'炭水化物|carbohydrates?|carbs?|(?<![A-Za-zァ-ヶー])C(?=\\s*\\d)',
+  sug:'糖質|net\\s*carbs?|sugars?'
+};
+var LABELRE=new RegExp('(?:'+[KW.fib,KW.k,KW.f,KW.p,KW.car,KW.sug].join('|')+')','i');
+var ZEROW='(?:Tr|微量|少量|ほぼ0|ほぼゼロ|なし|ゼロ)';
+function nutVal(seg,kw){
+  var m=seg.match(new RegExp('(?:'+kw+')[^0-9\\n]{0,8}?(\\d+(?:\\.\\d+)?)','i'));
+  if(m)return parseFloat(m[1]);
+  if(new RegExp('(?:'+kw+')[\\s：:は]{0,3}'+ZEROW,'i').test(seg))return 0;
+  return null;
+}
+function nutAll(seg,o){
+  var v;
+  if((v=nutVal(seg,KW.f))!=null)o.f=v;
+  if((v=nutVal(seg,KW.p))!=null)o.p=v;
+  if((v=nutVal(seg,KW.sug))!=null)o.sug=v;
+  if((v=nutVal(seg,KW.car))!=null)o.car=v;
+  if((v=nutVal(seg,KW.fib))!=null)o.fib=v;
+  v=nutVal(seg,'エネルギー|カロリー|calories?|energy');
+  if(v==null){var m=seg.match(/(\d+(?:\.\d+)?)\s*(?:kcal|キロカロリー|カロリー|㎉)/i);if(m)v=parseFloat(m[1])}
+  if(v!=null)o.k=v;
+}
+function colType(h){
+  h=String(h);
+  if(new RegExp(KW.fib,'i').test(h))return 'fib';
+  if(new RegExp(KW.k,'i').test(h))return 'k';
+  if(new RegExp(KW.f,'i').test(h))return 'f';
+  if(new RegExp(KW.p,'i').test(h))return 'p';
+  if(new RegExp(KW.car,'i').test(h))return 'car';
+  if(new RegExp(KW.sug,'i').test(h))return 'sug';
+  if(/^(食品|食材|名前|品名|名称|商品|料理|メニュー|name|food|item)/i.test(h.trim()))return 'name';
+  if(/量|重さ|重量|グラム|分量|serving|amount|weight/i.test(h))return 'amt';
+  return '';
+}
+function cellNum(c){
+  c=String(c).replace(/[,，]/g,'').trim();
+  if(/^(?:tr|微量|少量|ほぼ0|なし|[-－ーー—–]+|0未満)$/i.test(c.replace(/\s/g,'')))return 0;
+  var m=c.match(/(\d+(?:\.\d+)?)/);return m?parseFloat(m[1]):null;
+}
+function parseTable(lines){
+  var rows=lines.map(function(l){var c=l.split(/\||\t/).map(function(x){return x.trim()});if(c.length&&c[0]==='')c.shift();if(c.length&&c[c.length-1]==='')c.pop();return c})
+    .filter(function(c){return c.length>1&&!/^[\s:\-－ー—–|]+$/.test(c.join(''))});
+  if(rows.length<2)return [];
+  var head=rows[0],types=head.map(colType);
+  var nn=types.filter(function(x){return x&&x!=='name'&&x!=='amt'}).length;
+  if(nn<2)return [];
+  var nameCol=types.indexOf('name'); if(nameCol<0){nameCol=types.findIndex(function(x){return !x})} if(nameCol<0)nameCol=0;
+  var amtCol=types.indexOf('amt');
+  var hb=head.join(' ').match(/(\d+(?:\.\d+)?)\s*(?:g|グラム)/i), headBase=hb?parseFloat(hb[1]):0;
+  var out=[];
+  rows.slice(1).forEach(function(c){
+    var o={name:'',base:headBase||100,f:null,p:null,sug:null,car:null,fib:null,k:null};
+    var cell=c[nameCol]||'';
+    var pm=cell.match(/(\d+(?:\.\d+)?)\s*(?:g|グラム)/i);
+    o.name=cell.replace(/[（(].*?[）)]/g,'').replace(/\d+(?:\.\d+)?\s*(?:g|グラム)(?:あたり)?/ig,'').trim();
+    if(pm&&!headBase)o.base=parseFloat(pm[1]);
+    if(amtCol>=0&&c[amtCol]){var a=cellNum(c[amtCol]);if(a>0)o.base=a}
+    types.forEach(function(t,i){
+      if(!t||t==='name'||t==='amt'||i>=c.length)return;
+      var v=cellNum(c[i]);if(v!=null)o[t]=v;
+    });
+    out.push(o);
+  });
+  return out;
+}
 function parseMulti(text){
-  var t=String(text).normalize('NFKC').replace(/\*\*|__|`/g,'').replace(/[：:]/g,'、');
-  var segs=t.split(/[、，,;；。\n\r\t|｜]+/).map(function(x){return x.replace(/^[\s\-・●■□◆◇▶▷•*#>]+|^\d+[.)．]\s+/,'').replace(/(?:です|ます|でした|になります)$/,'').trim()}).filter(Boolean);
-  var N='(\\d+(?:\\.\\d+)?)', items=[], cur=null, pend=[];
-  function nu(){return {name:'',base:100,f:null,p:null,c:null,k:null,fib:null,sug:null,car:null}}
-  function has(i){return i.f!=null||i.p!=null||i.c!=null||i.k!=null||i.sug!=null||i.car!=null}
-  function startItem(name,base){cur=nu();cur.name=name;cur.base=base;items.push(cur)}
-  function gm(seg,re){var m=seg.match(re);return m?parseFloat(m[1]):null}
-  var reBasis=new RegExp('^(.*?)[\\s（(]*'+N+'\\s*(?:g|グラム)\\s*(?:あたり|当たり|当り)?[\\s）)]*$');
-  var reUnit=new RegExp('^(.*?)\\s*1\\s*(?:個|袋|本|枚|切れ|パック|食|杯|包|粒|缶|丁)[\\s（(]*(?:あたり)?[\\s・]*'+N+'\\s*g[\\s）)]*(?:あたり|当たり)?$');
-  segs.forEach(function(seg){
-    var m=null;
-    if(!LABELRE.test(seg)){
-      m=seg.match(reUnit)||seg.match(reBasis);
-      if(m){
-        var nm=m[1].replace(/[（(].*$/,'').trim();
-        if(/\d+\s*g/.test(nm)){m=null}
-        else{startItem((pend.join('')+nm).trim(),parseFloat(m[2]));pend=[];return}
-      }
-      if(!m){ if(!/^\d/.test(seg)&&seg.length<=24)pend.push(seg); return }
-    }
-    /* 栄養の項目 */
-    var bs=gm(seg,new RegExp(N+'\\s*(?:g|グラム)\\s*(?:\\)|）)?\\s*(?:あたり|当たり|当り)'))||gm(seg,new RegExp('1\\s*(?:個|袋|本|枚|切れ|パック|食|杯|包|粒)[^0-9]{0,6}[（(]?\\s*'+N+'\\s*g'));
-    if(bs>0){ if(!cur||has(cur)){startItem((pend.join('')).trim(),bs);pend=[]} else cur.base=bs }
-    if(!cur){startItem(pend.join('').trim(),100);pend=[]}
-    else if(has(cur)&&pend.length&&false){}
-    var v;
-    v=gm(seg,new RegExp('(?:脂質|脂肪)[^0-9]{0,8}?'+N));if(v!=null)cur.f=v;
-    v=gm(seg,new RegExp('(?:たんぱく質|タンパク質|蛋白質|プロテイン|たんぱく|タンパク)[^0-9]{0,8}?'+N));if(v!=null)cur.p=v;
-    v=gm(seg,new RegExp('糖質[^0-9]{0,8}?'+N));if(v!=null)cur.sug=v;
-    v=gm(seg,new RegExp('炭水化物[^0-9]{0,8}?'+N));if(v!=null)cur.car=v;
-    v=gm(seg,new RegExp('食物繊維[^0-9]{0,8}?'+N));if(v!=null)cur.fib=v;
-    v=gm(seg,new RegExp('(?:エネルギー|カロリー)[^0-9]{0,8}?'+N));if(v==null)v=gm(seg,new RegExp(N+'\\s*(?:kcal|カロリー)','i'));if(v!=null)cur.k=v;
-  });
-  return items.filter(has).map(function(i){
+  var t=String(text).normalize('NFKC').replace(/\*\*|__|`/g,'').replace(/(\d),(\d{3})(?!\d)/g,'$1$2');
+  var lines=t.split(/\r?\n/), tl=lines.filter(function(l){return l.indexOf('|')>=0||l.indexOf('\t')>=0});
+  var items=[];
+  if(tl.length>=2){items=parseTable(tl)}
+  if(!items.filter(hasV).length){items=parseText(t)}
+  return finish(items);
+}
+function hasV(i){return i.f!=null||i.p!=null||i.sug!=null||i.car!=null||i.k!=null}
+function finish(items){
+  return items.filter(hasV).map(function(i){
     var c=i.sug!=null?i.sug:(i.car!=null?Math.max(0,i.car-(i.fib||0)):null);
-    return {name:i.name,base:i.base,f:i.f,p:i.p,c:c,k:i.k,note:(i.sug==null&&i.car!=null)?(i.fib?'炭水化物−食物繊維':'炭水化物を糖質として'):''};
+    var nm=String(i.name||'').replace(/^[#\s・●■□◆◇▶▷•*>\-]+/,'').replace(/(?:の?栄養(?:成分|価)?|について|は|です)$/,'').trim();
+    return {name:nm,base:i.base>0?i.base:100,f:i.f,p:i.p,c:c==null?null:Math.round(c*100)/100,k:i.k,note:(i.sug==null&&i.car!=null)?(i.fib?'炭水化物−食物繊維':'炭水化物を糖質として'):''};
   });
+}
+function parseText(t){
+  t=t.replace(/[：:]/g,'、').replace(/\s+[\/／]\s+|／/g,'、');
+  var segs=t.split(/[、，,;；。\n\r\t|｜]+/).map(function(x){return x.replace(/^[\s\-・●■□◆◇▶▷•*#>]+|^\d+[.)．]\s+/,'').replace(/(?:です|ます|でした|になります)$/,'').trim()}).filter(Boolean);
+  var N='(\\d+(?:\\.\\d+)?)', items=[], cur=null, pend=[], pendLabel='';
+  var UN='個|袋|本|枚|切れ|パック|食分|食|杯|包|粒|缶|丁|玉|房|尾|匹|カップ|さじ';
+  function nu(){return {name:'',base:100,f:null,p:null,sug:null,car:null,fib:null,k:null}}
+  function startItem(name,base){cur=nu();cur.name=name;cur.base=base;items.push(cur)}
+  var reBasis=new RegExp('^(.*?)[\\s（(]*'+N+'\\s*(?:g|グラム)\\s*(?:あたり|当たり|当り)?[\\s）)]*$');
+  var reUnit=new RegExp('^(.*?)\\s*(?:(?:大さじ|小さじ)\\s*\\d+(?:\\.\\d+)?|\\d+(?:\\.\\d+)?\\s*(?:'+UN+'))[\\s（(]*(?:あたり)?[\\s・]*'+N+'\\s*g[\\s）)]*(?:あたり|当たり)?$');
+  var JUNK=/ました$|でしょう$|です$|ます$|ください|以下|通り|なります|参考|目安|合計|合わせ|成分表|栄養価$/;
+  function nameStart(name,base,fromPrefix){
+    name=name.replace(/[（(].*$/,'').trim();
+    if(pend.length&&!fromPrefix){name=(pend.join('')+name).trim()}
+    pend=[];
+    if(cur&&!hasV(cur)&&!cur.name){cur.name=name;cur.base=base}else startItem(name,base);
+  }
+  function trySplit(s){
+    s=s.replace(new RegExp('\\s*1\\s*(?:'+UN+')\\s*(?:あたり)?$'),function(x){return /g/.test(s.slice(0,s.length-x.length))?'':x});
+    var m=s.match(reUnit)||s.match(reBasis);
+    if(m&&!/\d+\s*g/.test(m[1].replace(/[（(].*$/,'')))return {name:m[1],base:parseFloat(m[2])};
+    return null;
+  }
+  segs.forEach(function(seg){
+    var isLabel=LABELRE.test(seg);
+    /* ラベルだけの行 → 次の数字行を待つ */
+    if(isLabel&&!/\d/.test(seg)&&!new RegExp(ZEROW,'i').test(seg)){
+      var lt=colType(seg);if(lt&&lt!=='name'){pendLabel=lt;if(!cur||(pend.length&&hasV(cur))){startItem(pend.join('').trim(),100);pend=[]}else if(pend.length&&!cur.name){cur.name=pend.join('').trim();pend=[]}}
+      return;
+    }
+    if(pendLabel&&/^[\s約]*\d+(?:\.\d+)?\s*(?:g|グラム|kcal|キロカロリー|㎉)?$/i.test(seg)){
+      if(!cur)startItem('',100);
+      if(pendLabel==='car'&&false){}
+      cur[pendLabel]=parseFloat(seg.match(/(\d+(?:\.\d+)?)/)[1]);pendLabel='';return;
+    }
+    pendLabel='';
+    if(!isLabel){
+      var ts=trySplit(seg);
+      if(ts){nameStart(ts.name,ts.base);return}
+      if(!/^\d/.test(seg)&&seg.length<=24&&!JUNK.test(seg)){pend.push(seg);if(pend.join('').length>24)pend=[seg]}
+      return;
+    }
+    /* 栄養の項目（食品名や量が前に付いていることもある）*/
+    var idx=seg.search(LABELRE), prefix=seg.slice(0,idx).replace(/[\s、：:（(]+$/,'').trim(), consumed=false;
+    if(prefix&&!/[はがをのに]$/.test(prefix)){
+      var ps=trySplit(prefix);
+      if(ps){nameStart(ps.name,ps.base,false);consumed=true}
+      else if(!/\d/.test(prefix)&&prefix.length<=24){nameStart(prefix,100,false)}
+    }
+    if(!consumed){
+      var bs=null,mb=seg.match(new RegExp(N+'\\s*(?:g|グラム)\\s*(?:\\)|）)?\\s*(?:あたり|当たり|当り)'))||seg.match(new RegExp('1\\s*(?:'+UN+')[^0-9]{0,6}[（(]?\\s*'+N+'\\s*g'));
+      if(mb)bs=parseFloat(mb[1]);
+      if(bs>0){ if(!cur||hasV(cur)){startItem(pend.join('').trim(),bs);pend=[]} else cur.base=bs }
+    }
+    if(pend.length){var nm=pend.join('').trim();pend=[];if(!cur||hasV(cur))startItem(nm,100);else if(!cur.name)cur.name=nm}
+    if(!cur)startItem('',100);
+    nutAll(seg,cur);
+  });
+  return items;
 }
 function addCustomFood(n,bs,f,c,p,k,dg){
   var r=100/bs; f=(f||0)*r;c=(c||0)*r;p=(p||0)*r; k=(k>=0)?k*r:(p*4+f*9+c*4);
@@ -530,7 +635,7 @@ function openCustom(name,done){
     '<label class="field"><span>この数字は何gあたり？（100gあたりなら100、1個50gなら50）</span><div class="amount" style="margin:0"><input id="cb" inputmode="decimal" value="100"><span>g あたり</span></div></label>'+
     '<div class="grid2"><label class="field"><span>脂質（g）</span><input id="cf" inputmode="decimal"></label><label class="field"><span>糖質（g）</span><input id="cc" inputmode="decimal"></label><label class="field"><span>たんぱく質（g）</span><input id="cp" inputmode="decimal"></label><label class="field"><span>カロリー（kcal）</span><input id="ck" inputmode="decimal" placeholder="空欄で自動"></label></div>'+
     '<label class="field"><span>いつも食べる量（g）※入れると、食事に追加するとき最初から入ります</span><input id="cd" inputmode="decimal" placeholder="例：30"></label>'+
-    '<button class="btn primary big" data-save>登録する</button><p class="note" style="text-align:center;margin-top:10px">アプリの版：v12（まとめて登録 1つずつグラム入力対応）</p></div>',true);
+    '<button class="btn primary big" data-save>登録する</button><p class="note" style="text-align:center;margin-top:10px">アプリの版：v13（まとめて登録 1つずつグラム入力対応）</p></div>',true);
   var b=sh.box; $('[data-x]',b).onclick=sh.close;
   $('[data-parse]',b).onclick=function(){
     var list=parseMulti($('#paste',b).value), pn=$('#pn',b), mu=$('#multi',b);
