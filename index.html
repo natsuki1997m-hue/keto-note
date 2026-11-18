@@ -394,6 +394,10 @@ function openPicker(opts){
   function foodRow(f,i){return '<button class="row" data-i="'+i+'" aria-pressed="'+(st.sel&&st.sel.ref===f?'true':'false')+'"><div class="nm">'+esc(f.n)+(f.custom?'<span class="tag">自分の食品</span>':'')+'</div><div class="per"><span>100g:</span>'+perHtml(f.per)+'</div></button>'}
   function paint(){
     var html='';
+    if(st.multi&&st.multi.length&&st.tab==='search'){
+      html='<p class="hint">登録した食品です。グラムを入れて「追加」を押してください。</p>'+st.multi.map(function(f,i){return '<div class="card" style="margin-bottom:8px"><div class="nm" style="font-weight:700;margin-bottom:6px">'+esc(f.n)+'</div><div class="amount" style="margin:0 0 8px"><input data-mg="'+i+'" inputmode="decimal" value="'+(f._g||(f.dg>0?f.dg:100))+'" aria-label="'+esc(f.n)+'のグラム"><span>g</span></div><div class="per" style="margin-bottom:8px"><span>100g:</span>'+perHtml(f.per)+'</div><button class="btn primary big" data-madd="'+i+'">追加</button></div>'}).join('')+'<button class="btn big" data-mdone style="margin-top:6px">追加しないで閉じる（食品を探す画面へ）</button>';
+      res.innerHTML=html;return;
+    }
     if(st.tab==='my'){
       st.list=S.my;
       if(!S.my.length)html='<p class="hint">まだマイフードがありません。食事を入れたあと「マイフードに登録」を押すと作れます。</p>';
@@ -437,11 +441,18 @@ function openPicker(opts){
   q.addEventListener('input',function(){st.q=q.value;paint()});
   chips.addEventListener('click',function(e){var b=e.target.closest('button');if(!b)return;st.grp=+b.dataset.g;$$('button',chips).forEach(function(x){x.setAttribute('aria-pressed',x===b?'true':'false')});paint()});
   box.addEventListener('click',function(e){
+    var ma=e.target.closest('[data-madd]');
+    if(ma){var i=+ma.dataset.madd,f=st.multi[i],inp=$('[data-mg="'+i+'"]',box),v=toNum(inp.value);
+      if(!(v>0)){toast('グラムを入れてください');inp.focus();return}
+      $$('[data-mg]',box).forEach(function(x){st.multi[+x.dataset.mg]._g=x.value});
+      pushRecent(f);(S.lastG=S.lastG||{})[f.id]=v;save();opts.onPick('food',f,v);toast(f.n+' を追加しました');
+      st.multi.splice(i,1);if(opts.once&&!st.multi.length){sh.close();return}paint();return}
+    if(e.target.closest('[data-mdone]')){st.multi=null;paint();return}
     var t=e.target.closest('[data-t]');
     if(t){st.tab=t.dataset.t;st.sel=null;showPick();$$('[data-t]',box).forEach(function(x){x.setAttribute('aria-selected',x===t?'true':'false')});var s=st.tab==='search';$('.search',box).hidden=!s;chips.hidden=!s;paint();return}
     var r=e.target.closest('.row');
     if(r){var item=st.list[+r.dataset.i];if(!item)return;st.sel=st.tab==='my'?{kind:'dish',ref:item}:{kind:'food',ref:item,last:st.qg};showPick();paint();return}
-    if(e.target.closest('[data-custom]')){openCustom(parseQ(q.value).text,function(f){st.sel={kind:'food',ref:f,last:st.qg};st.tab='search';showPick();paint()})}
+    if(e.target.closest('[data-custom]')){openCustom(parseQ(q.value).text,function(f,foods){st.tab='search';if(foods&&foods.length>1){st.sel=null;st.multi=foods.slice();showPick();paint();return}st.sel={kind:'food',ref:f,last:st.qg};showPick();paint()})}
   });
   paint(); setTimeout(function(){q.focus()},50);
 }
@@ -545,7 +556,7 @@ function openCustom(name,done){
       if(!made.length){toast('登録する食品がありません');return}
       var last=null;
       var foods=made.map(function(m){var o=m[1];return addCustomFood(m[0],o.base,o.f,o.c,o.p,o.k,o.base!==100?o.base:0)});foods.slice().reverse().forEach(pushRecent);last=foods[0];
-      save();sh.close();toast(made.length+'個を登録しました');if(done)done(last);
+      save();sh.close();toast(made.length+'個を登録しました');if(done)done(last,foods);
     };
   };
   $('[data-save]',b).onclick=function(){
