@@ -465,9 +465,56 @@ function parseNutri(t){
   o.k=g(new RegExp('(?:エネルギー|カロリー)[^0-9\\n]{0,10}?'+N))||g(new RegExp(N+'\\s*kcal','i'));
   return o;
 }
+/* 複数の食品がまとめて貼られても、食品ごとに分けて読み取る */
+var LABELRE=/カロリー|エネルギー|kcal|たんぱく|タンパク|蛋白|プロテイン|脂質|脂肪|糖質|炭水化物|食物繊維/i;
+function parseMulti(text){
+  var t=String(text).normalize('NFKC').replace(/\*\*|__|`/g,'').replace(/[：:]/g,'、');
+  var segs=t.split(/[、，,;；\n\r\t|｜]+/).map(function(x){return x.replace(/^[\s\-・●■□◆◇▶▷•*#>]+|^\d+[.)．]\s+/,'').trim()}).filter(Boolean);
+  var N='(\\d+(?:\\.\\d+)?)', items=[], cur=null, pend=[];
+  function nu(){return {name:'',base:100,f:null,p:null,c:null,k:null,fib:null,sug:null,car:null}}
+  function has(i){return i.f!=null||i.p!=null||i.c!=null||i.k!=null||i.sug!=null||i.car!=null}
+  function startItem(name,base){cur=nu();cur.name=name;cur.base=base;items.push(cur)}
+  function gm(seg,re){var m=seg.match(re);return m?parseFloat(m[1]):null}
+  var reBasis=new RegExp('^(.*?)[\\s（(]*'+N+'\\s*(?:g|グラム)\\s*(?:あたり|当たり|当り)?[\\s）)]*$');
+  var reUnit=new RegExp('^(.*?)\\s*1\\s*(?:個|袋|本|枚|切れ|パック|食|杯|包|粒|缶|丁)[\\s（(]*(?:あたり)?[\\s・]*'+N+'\\s*g[\\s）)]*(?:あたり|当たり)?$');
+  segs.forEach(function(seg){
+    var m=null;
+    if(!LABELRE.test(seg)){
+      m=seg.match(reUnit)||seg.match(reBasis);
+      if(m){
+        var nm=m[1].replace(/[（(].*$/,'').trim();
+        if(/\d+\s*g/.test(nm)){m=null}
+        else{startItem((pend.join('')+nm).trim(),parseFloat(m[2]));pend=[];return}
+      }
+      if(!m){ if(!/^\d/.test(seg)&&seg.length<=24)pend.push(seg); return }
+    }
+    /* 栄養の項目 */
+    var bs=gm(seg,new RegExp(N+'\\s*(?:g|グラム)\\s*(?:\\)|）)?\\s*(?:あたり|当たり|当り)'))||gm(seg,new RegExp('1\\s*(?:個|袋|本|枚|切れ|パック|食|杯|包|粒)[^0-9]{0,6}[（(]?\\s*'+N+'\\s*g'));
+    if(bs>0){ if(!cur||has(cur)){startItem((pend.join('')).trim(),bs);pend=[]} else cur.base=bs }
+    if(!cur){startItem(pend.join('').trim(),100);pend=[]}
+    else if(has(cur)&&pend.length&&false){}
+    var v;
+    v=gm(seg,new RegExp('(?:脂質|脂肪)[^0-9]{0,8}?'+N));if(v!=null)cur.f=v;
+    v=gm(seg,new RegExp('(?:たんぱく質|タンパク質|蛋白質|プロテイン|たんぱく|タンパク)[^0-9]{0,8}?'+N));if(v!=null)cur.p=v;
+    v=gm(seg,new RegExp('糖質[^0-9]{0,8}?'+N));if(v!=null)cur.sug=v;
+    v=gm(seg,new RegExp('炭水化物[^0-9]{0,8}?'+N));if(v!=null)cur.car=v;
+    v=gm(seg,new RegExp('食物繊維[^0-9]{0,8}?'+N));if(v!=null)cur.fib=v;
+    v=gm(seg,new RegExp('(?:エネルギー|カロリー)[^0-9]{0,8}?'+N));if(v==null)v=gm(seg,new RegExp(N+'\\s*(?:kcal|カロリー)','i'));if(v!=null)cur.k=v;
+  });
+  return items.filter(has).map(function(i){
+    var c=i.sug!=null?i.sug:(i.car!=null?Math.max(0,i.car-(i.fib||0)):null);
+    return {name:i.name,base:i.base,f:i.f,p:i.p,c:c,k:i.k,note:(i.sug==null&&i.car!=null)?(i.fib?'炭水化物−食物繊維':'炭水化物を糖質として'):''};
+  });
+}
+function addCustomFood(n,bs,f,c,p,k,dg){
+  var r=100/bs; f=(f||0)*r;c=(c||0)*r;p=(p||0)*r; k=(k>=0)?k*r:(p*4+f*9+c*4);
+  var per={k:Math.round(k*10)/10,p:Math.round(p*100)/100,f:Math.round(f*100)/100,c:Math.round(c*100)/100};
+  var food={id:'c_'+uid(),n:n,per:per,custom:true,dg:dg>0?dg:0};
+  S.custom.push({id:food.id,n:n,per:per,dg:food.dg}); return food;
+}
 function openCustom(name,done){
   var sh=openSheet('<div class="sheetTop"><h2>自分で食品を登録</h2><button class="btn sm" data-x>閉じる</button></div><div class="sheetBody">'+
-    '<label class="field"><span>AIの答えや栄養成分表示の文章を貼る（数字を自動で読み取ります）</span><textarea id="paste" rows="3" style="min-height:84px;font-family:inherit;font-size:15px" placeholder="例：1個(50g)あたり 脂質5g たんぱく質6g 炭水化物0.5g"></textarea></label><button class="btn" data-parse style="margin-bottom:12px">読み取る</button><p class="note" id="pn" style="margin:0 0 10px"></p>'+
+    '<label class="field"><span>AIの答えや栄養成分表示の文章を貼る（数字を自動で読み取ります）</span><textarea id="paste" rows="3" style="min-height:84px;font-family:inherit;font-size:15px" placeholder="例：1個(50g)あたり 脂質5g たんぱく質6g 炭水化物0.5g"></textarea></label><button class="btn" data-parse style="margin-bottom:12px">読み取る</button><p class="note" id="pn" style="margin:0 0 10px"></p><div id="multi" hidden></div>'+
     '<label class="field"><span>名前</span><input id="cn" value="'+esc(name||'')+'"></label>'+
     '<label class="field"><span>この数字は何gあたり？（100gあたりなら100、1個50gなら50）</span><div class="amount" style="margin:0"><input id="cb" inputmode="decimal" value="100"><span>g あたり</span></div></label>'+
     '<div class="grid2"><label class="field"><span>脂質（g）</span><input id="cf" inputmode="decimal"></label><label class="field"><span>糖質（g）</span><input id="cc" inputmode="decimal"></label><label class="field"><span>たんぱく質（g）</span><input id="cp" inputmode="decimal"></label><label class="field"><span>カロリー（kcal）</span><input id="ck" inputmode="decimal" placeholder="空欄で自動"></label></div>'+
@@ -475,21 +522,38 @@ function openCustom(name,done){
     '<button class="btn primary big" data-save>登録する</button></div>',true);
   var b=sh.box; $('[data-x]',b).onclick=sh.close;
   $('[data-parse]',b).onclick=function(){
-    var o=parseNutri($('#paste',b).value), n=0;
-    if(o.f!=null){$('#cf',b).value=o.f;n++} if(o.c!=null){$('#cc',b).value=o.c;n++} if(o.p!=null){$('#cp',b).value=o.p;n++} if(o.k!=null){$('#ck',b).value=o.k;n++}
-    $('#cb',b).value=o.base;
-    if(o.base!==100&&!$('#cd',b).value)$('#cd',b).value=o.base;
-    $('#pn',b).textContent=n?('読み取りました（'+o.base+'gあたり）。'+o.note+'下の数字が合っているか確認してから登録してください。'):'数字が見つかりませんでした。下に直接入れてください。';
+    var list=parseMulti($('#paste',b).value), pn=$('#pn',b), mu=$('#multi',b);
+    mu.innerHTML=''; mu.hidden=true;
+    if(!list.length){pn.textContent='数字が見つかりませんでした。下に直接入れてください。';return}
+    if(list.length===1){
+      var o=list[0];
+      if(o.name)$('#cn',b).value=o.name;
+      $('#cf',b).value=o.f!=null?o.f:''; $('#cc',b).value=o.c!=null?o.c:''; $('#cp',b).value=o.p!=null?o.p:''; $('#ck',b).value=o.k!=null?o.k:'';
+      $('#cb',b).value=o.base; if(o.base!==100&&!$('#cd',b).value)$('#cd',b).value=o.base;
+      pn.textContent='読み取りました（'+o.base+'gあたり）。'+(o.note?o.note+'で計算しました。':'')+'下の数字が合っているか確認してから登録してください。';
+      return;
+    }
+    pn.textContent=list.length+'個の食品が見つかりました。名前と数字を確かめて、まとめて登録できます。';
+    mu.hidden=false;
+    mu.innerHTML=list.map(function(o,i){return '<div class="card" data-m="'+i+'" style="margin-bottom:8px"><div class="irow" style="grid-template-columns:1fr 44px"><input data-mn value="'+esc(o.name)+'" placeholder="名前を入れてください" aria-label="名前"><button data-mx aria-label="この食品を外す">✕</button></div><div class="note" style="margin:6px 0 0">'+o.base+'gあたり ・ '+(o.k!=null?o.k+'kcal ・ ':'')+'脂'+(o.f!=null?o.f:0)+' 糖'+(o.c!=null?o.c:0)+' 蛋'+(o.p!=null?o.p:0)+'</div></div>'}).join('')+'<button class="btn primary big" data-multi>まとめて登録する</button>';
+    mu.onclick=function(e){
+      var x=e.target.closest('[data-mx]'); if(x){var cd=x.closest('[data-m]');list[+cd.dataset.m]=null;cd.remove();return}
+      if(!e.target.closest('[data-multi]'))return;
+      var cards=$$('[data-m]',mu),made=[],bad=false;
+      cards.forEach(function(cd){var o=list[+cd.dataset.m];if(!o)return;var n=$('[data-mn]',cd).value.trim();if(!n){bad=true;return}made.push([n,o])});
+      if(bad){toast('名前が空の食品があります');return}
+      if(!made.length){toast('登録する食品がありません');return}
+      var last=null;
+      made.forEach(function(m){var o=m[1];last=addCustomFood(m[0],o.base,o.f,o.c,o.p,o.k,o.base!==100?o.base:0)});
+      save();sh.close();toast(made.length+'個を登録しました');if(done)done(last);
+    };
   };
   $('[data-save]',b).onclick=function(){
     var n=$('#cn',b).value.trim(), bs=toNum($('#cb',b).value), f=toNum($('#cf',b).value)||0, c=toNum($('#cc',b).value)||0, p=toNum($('#cp',b).value)||0, k=toNum($('#ck',b).value), dg=toNum($('#cd',b).value);
     if(!n){toast('名前を入れてください');return}
     if(!(bs>0)){toast('「何gあたり」の数字を入れてください');return}
     if([$('#cf',b).value,$('#cc',b).value,$('#cp',b).value,$('#ck',b).value].every(function(v){return !String(v).trim()})){toast('栄養の数字を入れてください');return}
-    var r=100/bs; f*=r;c*=r;p*=r; if(k>=0)k*=r; else k=p*4+f*9+c*4;
-    var per={k:Math.round(k*10)/10,p:Math.round(p*100)/100,f:Math.round(f*100)/100,c:Math.round(c*100)/100};
-    var food={id:'c_'+uid(),n:n,per:per,custom:true,dg:dg>0?dg:0};
-    S.custom.push({id:food.id,n:n,per:per,dg:food.dg}); save(); sh.close(); toast('登録しました'); if(done)done(food);
+    var food=addCustomFood(n,bs,f,c,p,k,dg); save(); sh.close(); toast('登録しました'); if(done)done(food);
   };
 }
 
