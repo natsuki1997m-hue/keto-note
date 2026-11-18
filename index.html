@@ -530,7 +530,7 @@ function openCustom(name,done){
     '<label class="field"><span>この数字は何gあたり？（100gあたりなら100、1個50gなら50）</span><div class="amount" style="margin:0"><input id="cb" inputmode="decimal" value="100"><span>g あたり</span></div></label>'+
     '<div class="grid2"><label class="field"><span>脂質（g）</span><input id="cf" inputmode="decimal"></label><label class="field"><span>糖質（g）</span><input id="cc" inputmode="decimal"></label><label class="field"><span>たんぱく質（g）</span><input id="cp" inputmode="decimal"></label><label class="field"><span>カロリー（kcal）</span><input id="ck" inputmode="decimal" placeholder="空欄で自動"></label></div>'+
     '<label class="field"><span>いつも食べる量（g）※入れると、食事に追加するとき最初から入ります</span><input id="cd" inputmode="decimal" placeholder="例：30"></label>'+
-    '<button class="btn primary big" data-save>登録する</button></div>',true);
+    '<button class="btn primary big" data-save>登録する</button><p class="note" style="text-align:center;margin-top:10px">アプリの版：v12（まとめて登録 1つずつグラム入力対応）</p></div>',true);
   var b=sh.box; $('[data-x]',b).onclick=sh.close;
   $('[data-parse]',b).onclick=function(){
     var list=parseMulti($('#paste',b).value), pn=$('#pn',b), mu=$('#multi',b);
