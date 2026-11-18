@@ -469,7 +469,7 @@ function parseNutri(t){
 var LABELRE=/カロリー|エネルギー|kcal|たんぱく|タンパク|蛋白|プロテイン|脂質|脂肪|糖質|炭水化物|食物繊維/i;
 function parseMulti(text){
   var t=String(text).normalize('NFKC').replace(/\*\*|__|`/g,'').replace(/[：:]/g,'、');
-  var segs=t.split(/[、，,;；\n\r\t|｜]+/).map(function(x){return x.replace(/^[\s\-・●■□◆◇▶▷•*#>]+|^\d+[.)．]\s+/,'').trim()}).filter(Boolean);
+  var segs=t.split(/[、，,;；。\n\r\t|｜]+/).map(function(x){return x.replace(/^[\s\-・●■□◆◇▶▷•*#>]+|^\d+[.)．]\s+/,'').replace(/(?:です|ます|でした|になります)$/,'').trim()}).filter(Boolean);
   var N='(\\d+(?:\\.\\d+)?)', items=[], cur=null, pend=[];
   function nu(){return {name:'',base:100,f:null,p:null,c:null,k:null,fib:null,sug:null,car:null}}
   function has(i){return i.f!=null||i.p!=null||i.c!=null||i.k!=null||i.sug!=null||i.car!=null}
