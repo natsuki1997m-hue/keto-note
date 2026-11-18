@@ -1,0 +1,15 @@
+{
+  "name": "ケトン食ノート",
+  "short_name": "ケトン食",
+  "description": "ケトン食療法の脂質・糖質・たんぱく質・カロリー・ケトン比を記録するノート",
+  "lang": "ja",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f1f5f2",
+  "theme_color": "#1d6b52",
+  "icons": [
+    {"src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable"},
+    {"src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable"}
+  ]
+}
