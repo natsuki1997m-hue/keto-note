@@ -333,7 +333,7 @@ function openSheet(html,short){
 
 /* ---------- 食品を探す ---------- */
 function allSearchable(){
-  var c=S.custom.map(function(x){return {id:x.id,n:x.n,cat:'',al:'',per:x.per,custom:true,nk:norm(x.n),words:[norm(x.n)],key:norm(x.n)}});
+  var c=S.custom.map(function(x){return {id:x.id,n:x.n,cat:'',al:'',per:x.per,dg:x.dg||0,custom:true,nk:norm(x.n),words:[norm(x.n)],key:norm(x.n)}});
   return c.concat(FOODS);
 }
 function expand(t){var b=[t];if(t.length>2&&t.slice(-1)==='肉')b.push(t.slice(0,-1));var c=b.slice();b.forEach(function(x){ALN.forEach(function(a){if(x.indexOf(a[0])>=0)c.push(x.replace(a[0],a[1]))})});return c}
@@ -376,7 +376,7 @@ function search(q,grp){
   return res.slice(0,60).map(function(r){return r[3]});
 }
 function pushRecent(f){
-  var snap={id:f.id,n:f.n,per:f.per,custom:!!f.custom};
+  var snap={id:f.id,n:f.n,per:f.per,custom:!!f.custom,dg:f.dg||0};
   S.recent=[snap].concat(S.recent.filter(function(r){return r.id!==f.id})).slice(0,15);
 }
 
@@ -405,7 +405,7 @@ function openPicker(opts){
         html=st.list.length?st.list.map(foodRow).join(''):'<p class="hint">見つかりません。食品名だけで探してみてください（例：「卵」「こまつな」）。</p>';
         if(pq.g)html='<p class="hint"><b>'+pq.g+'g</b> で入れます。食品をタップしてください。</p>'+html;
       }else{
-        st.list=S.recent.map(function(r){return {id:r.id,n:r.n,per:r.per,custom:r.custom}});
+        st.list=S.recent.map(function(r){return {id:r.id,n:r.n,per:r.per,custom:r.custom,dg:r.dg||0}});
         html=st.list.length?'<p class="hint">最近使った食品</p>'+st.list.map(foodRow).join(''):'<p class="hint">食品名を入れてください。例：卵　バター　やし油　こまつな</p>';
       }
       html+='<button class="btn big" data-custom style="margin-top:6px">見つからないとき：自分で登録する</button>';
@@ -415,7 +415,7 @@ function openPicker(opts){
   function showPick(){
     if(!st.sel){pick.hidden=true;return}
     var isDish=st.sel.kind==='dish', ref=st.sel.ref;
-    var unit=isDish?'人前':'g', def=isDish?1:(st.sel.last||opts.defaultG||100);
+    var unit=isDish?'人前':'g', def=isDish?1:(st.sel.last||(S.lastG&&S.lastG[ref.id])||ref.dg||opts.defaultG||100);
     pick.hidden=false;
     pick.innerHTML='<div class="head"><b>'+esc(isDish?ref.name:ref.n)+'</b><button class="btn sm" data-clear>やめる</button></div><div class="amount"><input id="amt" inputmode="decimal" value="'+def+'" aria-label="'+(isDish?'何人前':'グラム')+'"><span>'+unit+'</span></div>'+(isDish?'':'<div class="quick">'+[5,10,20,50,100].map(function(n){return '<button data-q="'+n+'">'+n+'</button>'}).join('')+'</div>')+'<div class="prev nums" id="prev"></div><button class="btn primary big" data-add>追加する</button>'+(isDish&&opts.onTweak?'<button class="btn big" data-tweak style="margin-top:8px">材料を変えて追加</button>':'');
     var a=$('#amt',pick); a.focus(); a.select();
@@ -428,7 +428,7 @@ function openPicker(opts){
     if(tw)tw.onclick=function(){var v=toNum(a.value);if(!(v>0))v=1;sh.close();opts.onTweak(ref,v)};
     $('[data-add]',pick).onclick=function(){
       var v=toNum(a.value); if(!(v>0)){toast('数字を入れてください');a.focus();return}
-      if(isDish)opts.onPick('dish',ref,v); else {pushRecent(ref);save();opts.onPick('food',ref,v)}
+      if(isDish)opts.onPick('dish',ref,v); else {pushRecent(ref);(S.lastG=S.lastG||{})[ref.id]=v;save();opts.onPick('food',ref,v)}
       toast((isDish?ref.name:ref.n)+' を追加しました');
       if(opts.once){sh.close();return}
       st.sel=null; showPick(); st.q=''; q.value=''; paint(); if(st.tab==='search')q.focus();
@@ -447,16 +447,49 @@ function openPicker(opts){
 }
 
 /* ---------- 自分の食品 ---------- */
+/* AIの答えや栄養成分表示の文章から数字を読み取る */
+function parseNutri(t){
+  t=String(t).normalize('NFKC');
+  function g(re){var m=t.match(re);return m?parseFloat(m[1]):null}
+  var N='(\\d+(?:\\.\\d+)?)';
+  var o={base:100,f:null,p:null,c:null,k:null,note:''};
+  var b=g(new RegExp(N+'\\s*(?:g|グラム)\\s*(?:\\)|）)?\\s*(?:あたり|当たり|当り)'))||g(new RegExp('1\\s*(?:個|袋|本|枚|切れ|パック|食|杯|包|粒)[^0-9]{0,6}[（(]?\\s*'+N+'\\s*g'));
+  if(b>0)o.base=b;
+  o.f=g(new RegExp('(?:脂質|脂肪)[^0-9\\n]{0,10}?'+N));
+  o.p=g(new RegExp('(?:たんぱく質|タンパク質|蛋白質|プロテイン)[^0-9\\n]{0,10}?'+N));
+  var sug=g(new RegExp('糖質[^0-9\\n]{0,10}?'+N));
+  var car=g(new RegExp('炭水化物[^0-9\\n]{0,10}?'+N));
+  var fib=g(new RegExp('食物繊維[^0-9\\n]{0,10}?'+N));
+  if(sug!=null)o.c=sug;
+  else if(car!=null){o.c=Math.max(0,car-(fib||0));o.note=fib?'炭水化物から食物繊維を引いて糖質にしました。':'炭水化物の数字を糖質として入れました。'}
+  o.k=g(new RegExp('(?:エネルギー|カロリー)[^0-9\\n]{0,10}?'+N))||g(new RegExp(N+'\\s*kcal','i'));
+  return o;
+}
 function openCustom(name,done){
-  var sh=openSheet('<div class="sheetTop"><h2>自分で食品を登録</h2><button class="btn sm" data-x>閉じる</button></div><div class="sheetBody"><p class="note">パッケージの栄養成分表示を見て、<b>100gあたり</b>の数値を入れてください。カロリーは空欄なら自動で計算します。</p><label class="field"><span>名前</span><input id="cn" value="'+esc(name||'')+'"></label><div class="grid2"><label class="field"><span>脂質（g）</span><input id="cf" inputmode="decimal"></label><label class="field"><span>糖質（g）</span><input id="cc" inputmode="decimal"></label><label class="field"><span>たんぱく質（g）</span><input id="cp" inputmode="decimal"></label><label class="field"><span>カロリー（kcal）</span><input id="ck" inputmode="decimal" placeholder="空欄で自動"></label></div><button class="btn primary big" data-save>登録する</button></div>',true);
+  var sh=openSheet('<div class="sheetTop"><h2>自分で食品を登録</h2><button class="btn sm" data-x>閉じる</button></div><div class="sheetBody">'+
+    '<label class="field"><span>AIの答えや栄養成分表示の文章を貼る（数字を自動で読み取ります）</span><textarea id="paste" rows="3" style="min-height:84px;font-family:inherit;font-size:15px" placeholder="例：1個(50g)あたり 脂質5g たんぱく質6g 炭水化物0.5g"></textarea></label><button class="btn" data-parse style="margin-bottom:12px">読み取る</button><p class="note" id="pn" style="margin:0 0 10px"></p>'+
+    '<label class="field"><span>名前</span><input id="cn" value="'+esc(name||'')+'"></label>'+
+    '<label class="field"><span>この数字は何gあたり？（100gあたりなら100、1個50gなら50）</span><div class="amount" style="margin:0"><input id="cb" inputmode="decimal" value="100"><span>g あたり</span></div></label>'+
+    '<div class="grid2"><label class="field"><span>脂質（g）</span><input id="cf" inputmode="decimal"></label><label class="field"><span>糖質（g）</span><input id="cc" inputmode="decimal"></label><label class="field"><span>たんぱく質（g）</span><input id="cp" inputmode="decimal"></label><label class="field"><span>カロリー（kcal）</span><input id="ck" inputmode="decimal" placeholder="空欄で自動"></label></div>'+
+    '<label class="field"><span>いつも食べる量（g）※入れると、食事に追加するとき最初から入ります</span><input id="cd" inputmode="decimal" placeholder="例：30"></label>'+
+    '<button class="btn primary big" data-save>登録する</button></div>',true);
   var b=sh.box; $('[data-x]',b).onclick=sh.close;
+  $('[data-parse]',b).onclick=function(){
+    var o=parseNutri($('#paste',b).value), n=0;
+    if(o.f!=null){$('#cf',b).value=o.f;n++} if(o.c!=null){$('#cc',b).value=o.c;n++} if(o.p!=null){$('#cp',b).value=o.p;n++} if(o.k!=null){$('#ck',b).value=o.k;n++}
+    $('#cb',b).value=o.base;
+    if(o.base!==100&&!$('#cd',b).value)$('#cd',b).value=o.base;
+    $('#pn',b).textContent=n?('読み取りました（'+o.base+'gあたり）。'+o.note+'下の数字が合っているか確認してから登録してください。'):'数字が見つかりませんでした。下に直接入れてください。';
+  };
   $('[data-save]',b).onclick=function(){
-    var n=$('#cn',b).value.trim(), f=toNum($('#cf',b).value)||0, c=toNum($('#cc',b).value)||0, p=toNum($('#cp',b).value)||0, k=toNum($('#ck',b).value);
+    var n=$('#cn',b).value.trim(), bs=toNum($('#cb',b).value), f=toNum($('#cf',b).value)||0, c=toNum($('#cc',b).value)||0, p=toNum($('#cp',b).value)||0, k=toNum($('#ck',b).value), dg=toNum($('#cd',b).value);
     if(!n){toast('名前を入れてください');return}
-    if([$('#cf',b).value,$('#cc',b).value,$('#cp',b).value,$('#ck',b).value].every(function(v){return !String(v).trim()})){toast('栄養の数字を入れてください（100gあたり）');return}
-    if(!(k>=0))k=Math.round(p*4+f*9+c*4);
-    var food={id:'c_'+uid(),n:n,per:{k:k,p:p,f:f,c:c},custom:true};
-    S.custom.push({id:food.id,n:n,per:food.per}); save(); sh.close(); toast('登録しました'); if(done)done(food);
+    if(!(bs>0)){toast('「何gあたり」の数字を入れてください');return}
+    if([$('#cf',b).value,$('#cc',b).value,$('#cp',b).value,$('#ck',b).value].every(function(v){return !String(v).trim()})){toast('栄養の数字を入れてください');return}
+    var r=100/bs; f*=r;c*=r;p*=r; if(k>=0)k*=r; else k=p*4+f*9+c*4;
+    var per={k:Math.round(k*10)/10,p:Math.round(p*100)/100,f:Math.round(f*100)/100,c:Math.round(c*100)/100};
+    var food={id:'c_'+uid(),n:n,per:per,custom:true,dg:dg>0?dg:0};
+    S.custom.push({id:food.id,n:n,per:per,dg:food.dg}); save(); sh.close(); toast('登録しました'); if(done)done(food);
   };
 }
 
