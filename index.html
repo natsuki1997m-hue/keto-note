@@ -477,7 +477,6 @@ function parseNutri(t){
   return o;
 }
 /* 複数の食品がまとめて貼られても、食品ごとに分けて読み取る（箇条書き・表・改行・1行つづきなど）*/
-var SKIPN='食塩|ナトリウム|塩分|ビタミン|カルシウム|カリウム|鉄|マグネシウム|亜鉛|コレステロール|飽和脂肪酸|一価|多価|糖類|トランス|リン|銅|セレン|葉酸|水分|灰分|アルコール|カテキン|カフェイン|機能性|ポリフェノール|タウリン|乳酸菌|ヨウ素';
 var KW={
   fib:'食物繊維|fiber|fibre',
   k:'エネルギー|カロリー|calories?|energy|kcal',
@@ -549,7 +548,7 @@ function parseTable(lines){
   return out;
 }
 function parseMulti(text){
-  var t=String(text).normalize('NFKC').replace(/(\d)\s*(?:ml|ミリリットル|cc)(?![a-z])/gi,'$1g').replace(/\*\*|__|`/g,'').replace(/(\d),(\d{3})(?!\d)/g,'$1$2');
+  var t=String(text).normalize('NFKC').replace(/\*\*|__|`/g,'').replace(/(\d),(\d{3})(?!\d)/g,'$1$2');
   var lines=t.split(/\r?\n/), tl=lines.filter(function(l){return l.indexOf('|')>=0||l.indexOf('\t')>=0});
   var items=[];
   if(tl.length>=2){items=parseTable(tl)}
@@ -560,20 +559,20 @@ function hasV(i){return i.f!=null||i.p!=null||i.sug!=null||i.car!=null||i.k!=nul
 function finish(items){
   return items.filter(hasV).map(function(i){
     var c=i.sug!=null?i.sug:(i.car!=null?Math.max(0,i.car-(i.fib||0)):null);
-    var nm=String(i.name||'').replace(/栄養成分表示|栄養成分|栄養表示|栄養価/g,'').replace(/^[#\s・●■□◆◇▶▷•*>\-]+/,'').replace(/(?:の?栄養(?:成分|価)?|について|は|です)$/,'').trim();
+    var nm=String(i.name||'').replace(/^[#\s・●■□◆◇▶▷•*>\-]+/,'').replace(/(?:の?栄養(?:成分|価)?|について|は|です)$/,'').trim();
     return {name:nm,base:i.base>0?i.base:100,f:i.f,p:i.p,c:c==null?null:Math.round(c*100)/100,k:i.k,note:(i.sug==null&&i.car!=null)?(i.fib?'炭水化物−食物繊維':'炭水化物を糖質として'):''};
   });
 }
 function parseText(t){
   t=t.replace(/[：:]/g,'、').replace(/\s+[\/／]\s+|／/g,'、');
   var segs=t.split(/[、，,;；。\n\r\t|｜]+/).map(function(x){return x.replace(/^[\s\-・●■□◆◇▶▷•*#>]+|^\d+[.)．]\s+/,'').replace(/(?:です|ます|でした|になります)$/,'').trim()}).filter(Boolean);
-  var N='(\\d+(?:\\.\\d+)?)', items=[], cur=null, pend=[], pendLabel=[];
-  var UN='日分|日|本分|個|袋|本|枚|切れ|パック|食分|食|杯|包|粒|缶|丁|玉|房|尾|匹|カップ|さじ';
+  var N='(\\d+(?:\\.\\d+)?)', items=[], cur=null, pend=[], pendLabel='';
+  var UN='個|袋|本|枚|切れ|パック|食分|食|杯|包|粒|缶|丁|玉|房|尾|匹|カップ|さじ';
   function nu(){return {name:'',base:100,f:null,p:null,sug:null,car:null,fib:null,k:null}}
   function startItem(name,base){cur=nu();cur.name=name;cur.base=base;items.push(cur)}
-  var reBasis=new RegExp('^(.*?)[\\s（(]*'+N+'\\s*(?:g|グラム)\\s*[）)]?\\s*(?:あたり|当たり|当り)?[\\s）)]*$');
+  var reBasis=new RegExp('^(.*?)[\\s（(]*'+N+'\\s*(?:g|グラム)\\s*(?:あたり|当たり|当り)?[\\s）)]*$');
   var reUnit=new RegExp('^(.*?)\\s*(?:(?:大さじ|小さじ)\\s*\\d+(?:\\.\\d+)?|\\d+(?:\\.\\d+)?\\s*(?:'+UN+'))[\\s（(]*(?:あたり)?[\\s・]*'+N+'\\s*g[\\s）)]*(?:あたり|当たり)?$');
-  var JUNK=/栄養成分|栄養価|ました$|でしょう$|です$|ます$|ください|以下|通り|なります|参考|目安|合計|合わせ|成分表|栄養価$/;
+  var JUNK=/ました$|でしょう$|です$|ます$|ください|以下|通り|なります|参考|目安|合計|合わせ|成分表|栄養価$/;
   function nameStart(name,base,fromPrefix){
     name=name.replace(/[（(].*$/,'').trim();
     if(pend.length&&!fromPrefix){name=(pend.join('')+name).trim()}
@@ -587,22 +586,18 @@ function parseText(t){
     return null;
   }
   segs.forEach(function(seg){
-    var isLabel=LABELRE.test(seg), isSkip=new RegExp('^(?:'+SKIPN+')').test(seg)&&!isLabel;
-    /* 数字のない栄養素ラベル（食塩相当量など）も、順番を合わせるために列に入れる */
-    if(isSkip&&!/\d/.test(seg)){pendLabel.push('skip');return}
-    /* ラベルだけの行 → 後から来る数字と順番に組み合わせる */
+    var isLabel=LABELRE.test(seg);
+    /* ラベルだけの行 → 次の数字行を待つ */
     if(isLabel&&!/\d/.test(seg)&&!new RegExp(ZEROW,'i').test(seg)){
-      var lt=colType(seg);if(lt&&lt!=='name'){if(cur&&hasV(cur)&&!pendLabel.length&&!pend.length&&cur[lt]!=null){startItem('',100)}pendLabel.push(lt);if(!cur||(pend.length&&hasV(cur))){startItem(pend.join('').trim(),100);pend=[]}else if(pend.length&&!cur.name){cur.name=pend.join('').trim();pend=[]}}
+      var lt=colType(seg);if(lt&&lt!=='name'){pendLabel=lt;if(!cur||(pend.length&&hasV(cur))){startItem(pend.join('').trim(),100);pend=[]}else if(pend.length&&!cur.name){cur.name=pend.join('').trim();pend=[]}}
       return;
     }
-    if(pendLabel.length&&/^[\s約]*(?:\d+(?:\.\d+)?|tr|微量)\s*(?:g|グラム|kcal|キロカロリー|㎉|mg|μg|ml)?$/i.test(seg)){
+    if(pendLabel&&/^[\s約]*\d+(?:\.\d+)?\s*(?:g|グラム|kcal|キロカロリー|㎉)?$/i.test(seg)){
       if(!cur)startItem('',100);
-      var lab=pendLabel.shift(),mv=seg.match(/(\d+(?:\.\d+)?)/);
-      if(lab!=='skip')cur[lab]=mv?parseFloat(mv[1]):0;
-      return;
+      if(pendLabel==='car'&&false){}
+      cur[pendLabel]=parseFloat(seg.match(/(\d+(?:\.\d+)?)/)[1]);pendLabel='';return;
     }
-    pendLabel=[];
-    if(isSkip)return;
+    pendLabel='';
     if(!isLabel){
       var ts=trySplit(seg);
       if(ts){nameStart(ts.name,ts.base);return}
@@ -633,94 +628,15 @@ function addCustomFood(n,bs,f,c,p,k,dg){
   var food={id:'c_'+uid(),n:n,per:per,custom:true,dg:dg>0?dg:0};
   S.custom.push({id:food.id,n:n,per:per,dg:food.dg}); return food;
 }
-/* ---------- 写真の文字読み取り（OCR）---------- */
-var _ocr=null;
-function loadScript(src){return new Promise(function(res,rej){var el=document.createElement('script');el.src=src;el.onload=res;el.onerror=function(){rej(new Error('load '+src))};document.head.appendChild(el)})}
-function getOcrWorker(say){
-  if(_ocr)return _ocr;
-  var base=new URL('ocr/',location.href).href;
-  _ocr=(window.Tesseract?Promise.resolve():loadScript(base+'tesseract.min.js')).then(function(){
-    return window.Tesseract.createWorker('jpn',1,{workerPath:base+'worker.min.js',corePath:base,langPath:base,gzip:true,
-      logger:function(m){if(m&&m.status==='recognizing text'&&say)say('文字を読み取り中… '+Math.round((m.progress||0)*100)+'%')}});
-  });
-  _ocr.catch(function(){_ocr=null});
-  return _ocr;
-}
-function fileToCanvas(file){
-  return new Promise(function(res,rej){
-    var img=new Image(),u=URL.createObjectURL(file);
-    img.onload=function(){
-      var M=2400,sc=Math.min(1,M/Math.max(img.width,img.height)),c=document.createElement('canvas');
-      c.width=Math.round(img.width*sc);c.height=Math.round(img.height*sc);c.getContext('2d').drawImage(img,0,0,c.width,c.height);URL.revokeObjectURL(u);res(c);
-    };
-    img.onerror=function(){rej(new Error('img'))};img.src=u;
-  });
-}
-function rotateCanvas(c){var r=document.createElement('canvas');r.width=c.height;r.height=c.width;var x=r.getContext('2d');x.translate(r.width,0);x.rotate(Math.PI/2);x.drawImage(c,0,0);return r}
-function cropCanvas(c,f){
-  var sx=Math.round(f.x*c.width),sy=Math.round(f.y*c.height),sw=Math.max(8,Math.round(f.w*c.width)),sh=Math.max(8,Math.round(f.h*c.height));
-  var r=document.createElement('canvas');r.width=sw;r.height=sh;r.getContext('2d').drawImage(c,sx,sy,sw,sh,0,0,sw,sh);return r;
-}
-function prepCanvas(src){
-  var w=src.width,h=src.height,up=1;
-  if(Math.max(w,h)<1100)up=1100/Math.max(w,h); if(up>3)up=3;
-  var c=document.createElement('canvas');c.width=Math.round(w*up);c.height=Math.round(h*up);
-  var x=c.getContext('2d');x.imageSmoothingQuality='high';x.drawImage(src,0,0,c.width,c.height);
-  try{
-    var d=x.getImageData(0,0,c.width,c.height),a=d.data,lo=255,hi=0,i,g,hist=new Array(256).fill(0);
-    for(i=0;i<a.length;i+=4){g=Math.round(a[i]*.299+a[i+1]*.587+a[i+2]*.114);a[i]=a[i+1]=a[i+2]=g;hist[g]++}
-    var n=c.width*c.height,acc=0;for(i=0;i<256;i++){acc+=hist[i];if(acc>n*.02){lo=i;break}}acc=0;for(i=255;i>=0;i--){acc+=hist[i];if(acc>n*.02){hi=i;break}}
-    if(hi-lo>20){for(i=0;i<a.length;i+=4){g=(a[i]-lo)*255/(hi-lo);g=g<0?0:g>255?255:g;a[i]=a[i+1]=a[i+2]=g}}
-    /* 文字が白で背景が暗い（緑のボトルなど）ときは白黒を反転 */
-    var sum=0;for(i=0;i<a.length;i+=4)sum+=a[i];
-    if(sum/n<110){for(i=0;i<a.length;i+=4){a[i]=a[i+1]=a[i+2]=255-a[i]}}
-    x.putImageData(d,0,0);
-  }catch(e){}
-  return c;
-}
-function ocrCanvas(c,say){
-  return getOcrWorker(say).then(function(w){return w.recognize(prepCanvas(c))}).then(function(r){return r.data.text});
-}
-/* OCRが入れてしまう文字間の空白などを整える */
-function cleanOcr(t){
-  t=String(t).normalize('NFKC');
-  var re=/([぀-ヿ㐀-鿿ー)])[ \t]+(?=[぀-ヿ㐀-鿿ー(])/g;
-  t=t.replace(re,'$1').replace(re,'$1');
-  t=t.replace(/た[んン][ばぱ]{1,2}[くク][質貭]/g,'たんぱく質').replace(/^[北旨眉指詣]質/gm,'脂質').replace(/炭水化[物勿]/g,'炭水化物').replace(/エ[ネ木]ルギ[ーｰ-]/g,'エネルギー');
-  t=t.replace(/(\d)\s+(g|kcal|mg)\b/gi,'$1$2').replace(/(\d)\s*[,，]\s*(\d)(?=\s*(?:g|kcal))/g,'$1.$2');
-  return t.split(/\r?\n/).map(function(l){return l.replace(/^[\s|｜]+/,'').replace(/[ーー\-—_|｜.,、。\s]+$/,'').trim()}).filter(function(l){return l.length>1&&!/^[ーー\-—_|｜.,、。\s]+$/.test(l)}).join('\n');
-}
-/* 写真の読み取りで起きやすい間違い（小数点の抜け・矛盾）を見つけて知らせる */
-function ocrWarn(text){
-  var L=parseMulti(text),w=[];
-  L.forEach(function(o){
-    var tot=(o.f||0)+(o.p||0)+(o.c||0);
-    if(tot>o.base*1.05)w.push('脂質・たんぱく質・糖質の合計が量（'+o.base+'g）を超えています。小数点が抜けているかもしれません。');
-    if(o.k!=null&&o.base>0){var calc=(o.p||0)*4+(o.f||0)*9+(o.c||0)*4;if(calc>20&&Math.abs(calc-o.k)>Math.max(25,o.k*0.35))w.push('カロリー（'+o.k+'kcal）が、他の数字から計算した値（約'+Math.round(calc)+'kcal）と大きく違います。読み間違いがないか確認してください。')}
-  });
-  return w.filter(function(x,i){return w.indexOf(x)===i}).join(' ');
-}
 function openCustom(name,done){
   var sh=openSheet('<div class="sheetTop"><h2>自分で食品を登録</h2><button class="btn sm" data-x>閉じる</button></div><div class="sheetBody">'+
-    '<button class="btn primary big" data-clip style="margin-bottom:6px">📋 コピーした文字を貼って読み取る</button>'+
-    '<details class="note" style="margin:0 0 12px"><summary style="cursor:pointer">写真の文字をコピーするには（Googleレンズ）</summary><ol style="margin:6px 0 0;padding-left:1.3em;line-height:1.7"><li>パッケージの栄養成分表示を写真に撮る</li><li>Googleフォトでその写真を開き、下の「レンズ」を押す</li><li>「テキスト」を押し、栄養成分表示の部分を選んで「コピー」</li><li>このアプリに戻り、上の「📋 コピーした文字を貼って読み取る」を押す</li></ol><p style="margin:6px 0 0">AIの答えをコピーした場合も、同じボタンで読み取れます。</p></details>'+
-    '<label class="field"><span>貼り付けた文字（ここに直接貼っても読み取れます）</span><textarea id="paste" rows="3" style="min-height:84px;font-family:inherit;font-size:15px" placeholder="例：1個(50g)あたり 脂質5g たんぱく質6g 炭水化物0.5g"></textarea></label><button class="btn" data-parse style="margin-bottom:12px">読み取る</button><p class="note" id="pn" style="margin:0 0 10px"></p><div id="multi" hidden></div>'+
+    '<label class="field"><span>AIの答えや栄養成分表示の文章を貼る（数字を自動で読み取ります）</span><textarea id="paste" rows="3" style="min-height:84px;font-family:inherit;font-size:15px" placeholder="例：1個(50g)あたり 脂質5g たんぱく質6g 炭水化物0.5g"></textarea></label><button class="btn" data-parse style="margin-bottom:12px">読み取る</button><p class="note" id="pn" style="margin:0 0 10px"></p><div id="multi" hidden></div>'+
     '<label class="field"><span>名前</span><input id="cn" value="'+esc(name||'')+'"></label>'+
     '<label class="field"><span>この数字は何gあたり？（100gあたりなら100、1個50gなら50）</span><div class="amount" style="margin:0"><input id="cb" inputmode="decimal" value="100"><span>g あたり</span></div></label>'+
     '<div class="grid2"><label class="field"><span>脂質（g）</span><input id="cf" inputmode="decimal"></label><label class="field"><span>糖質（g）</span><input id="cc" inputmode="decimal"></label><label class="field"><span>たんぱく質（g）</span><input id="cp" inputmode="decimal"></label><label class="field"><span>カロリー（kcal）</span><input id="ck" inputmode="decimal" placeholder="空欄で自動"></label></div>'+
     '<label class="field"><span>いつも食べる量（g）※入れると、食事に追加するとき最初から入ります</span><input id="cd" inputmode="decimal" placeholder="例：30"></label>'+
-    '<button class="btn primary big" data-save>登録する</button><p class="note" style="text-align:center;margin-top:10px">アプリの版：v16（Googleレンズの文字を貼って読み取り）（まとめて登録 1つずつグラム入力対応）</p></div>',true);
+    '<button class="btn primary big" data-save>登録する</button><p class="note" style="text-align:center;margin-top:10px">アプリの版：v13（まとめて登録 1つずつグラム入力対応）</p></div>',true);
   var b=sh.box; $('[data-x]',b).onclick=sh.close;
-  $('[data-clip]',b).onclick=function(){
-    var ta=$('#paste',b),pn=$('#pn',b);
-    function manual(){ta.focus();pn.textContent='自動で貼り付けできませんでした。下の欄を長押しして「貼り付け」を選び、そのあと「読み取る」を押してください。'}
-    if(!(navigator.clipboard&&navigator.clipboard.readText)){manual();return}
-    navigator.clipboard.readText().then(function(t){
-      if(!t||!t.trim()){pn.textContent='コピーされた文字がありません。先にGoogleレンズやAIの答えで「コピー」を押してください。';return}
-      ta.value=t;$('[data-parse]',b).click();
-    }).catch(manual);
-  };
-  $('#paste',b).addEventListener('paste',function(){setTimeout(function(){$('[data-parse]',b).click()},50)});
   $('[data-parse]',b).onclick=function(){
     var list=parseMulti($('#paste',b).value), pn=$('#pn',b), mu=$('#multi',b);
     mu.innerHTML=''; mu.hidden=true;
