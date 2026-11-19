@@ -642,28 +642,40 @@ function getOcrWorker(say){
   _ocr.catch(function(){_ocr=null});
   return _ocr;
 }
-function prepImage(file){
+function fileToCanvas(file){
   return new Promise(function(res,rej){
-    var img=new Image();
+    var img=new Image(),u=URL.createObjectURL(file);
     img.onload=function(){
-      var M=2000,sc=Math.min(1,M/Math.max(img.width,img.height)), w=Math.round(img.width*sc), h=Math.round(img.height*sc);
-      if(Math.max(w,h)<1200){var up=1200/Math.max(w,h);w=Math.round(w*up);h=Math.round(h*up)}
-      var c=document.createElement('canvas');c.width=w;c.height=h;var x=c.getContext('2d');x.drawImage(img,0,0,w,h);
-      try{
-        var d=x.getImageData(0,0,w,h),a=d.data,lo=255,hi=0,i,g,hist=new Array(256).fill(0);
-        for(i=0;i<a.length;i+=4){g=Math.round(a[i]*.299+a[i+1]*.587+a[i+2]*.114);a[i]=a[i+1]=a[i+2]=g;hist[g]++}
-        var n=w*h,acc=0;for(i=0;i<256;i++){acc+=hist[i];if(acc>n*.02){lo=i;break}}acc=0;for(i=255;i>=0;i--){acc+=hist[i];if(acc>n*.02){hi=i;break}}
-        if(hi-lo>20){for(i=0;i<a.length;i+=4){g=(a[i]-lo)*255/(hi-lo);g=g<0?0:g>255?255:g;a[i]=a[i+1]=a[i+2]=g}}
-        x.putImageData(d,0,0);
-      }catch(e){}
-      URL.revokeObjectURL(img.src);res(c);
+      var M=2400,sc=Math.min(1,M/Math.max(img.width,img.height)),c=document.createElement('canvas');
+      c.width=Math.round(img.width*sc);c.height=Math.round(img.height*sc);c.getContext('2d').drawImage(img,0,0,c.width,c.height);URL.revokeObjectURL(u);res(c);
     };
-    img.onerror=function(){rej(new Error('img'))};
-    img.src=URL.createObjectURL(file);
+    img.onerror=function(){rej(new Error('img'))};img.src=u;
   });
 }
-function ocrImage(file,say){
-  return prepImage(file).then(function(c){return getOcrWorker(say).then(function(w){return w.recognize(c)})}).then(function(r){return r.data.text});
+function rotateCanvas(c){var r=document.createElement('canvas');r.width=c.height;r.height=c.width;var x=r.getContext('2d');x.translate(r.width,0);x.rotate(Math.PI/2);x.drawImage(c,0,0);return r}
+function cropCanvas(c,f){
+  var sx=Math.round(f.x*c.width),sy=Math.round(f.y*c.height),sw=Math.max(8,Math.round(f.w*c.width)),sh=Math.max(8,Math.round(f.h*c.height));
+  var r=document.createElement('canvas');r.width=sw;r.height=sh;r.getContext('2d').drawImage(c,sx,sy,sw,sh,0,0,sw,sh);return r;
+}
+function prepCanvas(src){
+  var w=src.width,h=src.height,up=1;
+  if(Math.max(w,h)<1100)up=1100/Math.max(w,h); if(up>3)up=3;
+  var c=document.createElement('canvas');c.width=Math.round(w*up);c.height=Math.round(h*up);
+  var x=c.getContext('2d');x.imageSmoothingQuality='high';x.drawImage(src,0,0,c.width,c.height);
+  try{
+    var d=x.getImageData(0,0,c.width,c.height),a=d.data,lo=255,hi=0,i,g,hist=new Array(256).fill(0);
+    for(i=0;i<a.length;i+=4){g=Math.round(a[i]*.299+a[i+1]*.587+a[i+2]*.114);a[i]=a[i+1]=a[i+2]=g;hist[g]++}
+    var n=c.width*c.height,acc=0;for(i=0;i<256;i++){acc+=hist[i];if(acc>n*.02){lo=i;break}}acc=0;for(i=255;i>=0;i--){acc+=hist[i];if(acc>n*.02){hi=i;break}}
+    if(hi-lo>20){for(i=0;i<a.length;i+=4){g=(a[i]-lo)*255/(hi-lo);g=g<0?0:g>255?255:g;a[i]=a[i+1]=a[i+2]=g}}
+    /* 文字が白で背景が暗い（緑のボトルなど）ときは白黒を反転 */
+    var sum=0;for(i=0;i<a.length;i+=4)sum+=a[i];
+    if(sum/n<110){for(i=0;i<a.length;i+=4){a[i]=a[i+1]=a[i+2]=255-a[i]}}
+    x.putImageData(d,0,0);
+  }catch(e){}
+  return c;
+}
+function ocrCanvas(c,say){
+  return getOcrWorker(say).then(function(w){return w.recognize(prepCanvas(c))}).then(function(r){return r.data.text});
 }
 /* OCRが入れてしまう文字間の空白などを整える */
 function cleanOcr(t){
@@ -692,23 +704,64 @@ function openCustom(name,done){
     '<label class="field"><span>この数字は何gあたり？（100gあたりなら100、1個50gなら50）</span><div class="amount" style="margin:0"><input id="cb" inputmode="decimal" value="100"><span>g あたり</span></div></label>'+
     '<div class="grid2"><label class="field"><span>脂質（g）</span><input id="cf" inputmode="decimal"></label><label class="field"><span>糖質（g）</span><input id="cc" inputmode="decimal"></label><label class="field"><span>たんぱく質（g）</span><input id="cp" inputmode="decimal"></label><label class="field"><span>カロリー（kcal）</span><input id="ck" inputmode="decimal" placeholder="空欄で自動"></label></div>'+
     '<label class="field"><span>いつも食べる量（g）※入れると、食事に追加するとき最初から入ります</span><input id="cd" inputmode="decimal" placeholder="例：30"></label>'+
-    '<button class="btn primary big" data-save>登録する</button><p class="note" style="text-align:center;margin-top:10px">アプリの版：v14（写真で読み取り対応）（まとめて登録 1つずつグラム入力対応）</p></div>',true);
+    '<button class="btn primary big" data-save>登録する</button><p class="note" style="text-align:center;margin-top:10px">アプリの版：v15（写真は範囲を囲んで読み取り）（まとめて登録 1つずつグラム入力対応）</p></div>',true);
   var b=sh.box; $('[data-x]',b).onclick=sh.close;
   /* 写真から文字を読み取る（スマホの中で処理。外部には送りません）*/
   function onPhoto(file){
     if(!file)return;
     var pn=$('#pn',b),cv=$('#camv',b);
-    var url=URL.createObjectURL(file);
-    cv.hidden=false;cv.innerHTML='<img src="'+url+'" alt="撮影した写真" style="max-width:100%;max-height:200px;border-radius:10px;border:1px solid var(--line)"><p class="note" style="margin:4px 0 0">写真の数字と、下の読み取り結果を見比べてください。</p>';
-    pn.textContent='写真を読み取り中です…（初めてのときは、読み取りの準備で少し時間がかかります）';
-    ocrImage(file,function(m){pn.textContent=m}).then(function(text){
-      text=cleanOcr(text);
-      $('#paste',b).value=text;
-      $('[data-parse]',b).click();
-      var pn2=$('#pn',b);
-      var warn=ocrWarn(text);
-      pn2.textContent=(pn2.textContent.indexOf('見つかりませんでした')>=0?'写真から数字を読み取れませんでした。もう少し近づいて、明るい場所でもう一度撮ってください。':'写真から読み取りました。小数点が抜けることがあるので、写真の数字と必ず見比べてください。')+(pn2.textContent.indexOf('見つかりませんでした')>=0?'':' '+pn2.textContent)+(warn?' ⚠ '+warn:'');
-    }).catch(function(){pn.textContent='写真の読み取りに失敗しました。通信が切れていないか確認して、もう一度お試しください。'});
+    pn.textContent='写真を開いています…';
+    fileToCanvas(file).then(function(src){
+      var f={x:.05,y:.05,w:.9,h:.9};
+      cv.hidden=false;
+      function drawCrop(){
+        cv.innerHTML='<p class="note" style="margin:0 0 6px"><b>栄養成分表示の部分だけ</b>を、枠の四隅をドラッグして囲んでください。</p>'+
+          '<div id="cw" style="position:relative;display:inline-block;max-width:100%;overflow:hidden;touch-action:none;border-radius:10px;border:1px solid var(--line);line-height:0"><img id="ci" alt="撮影した写真" style="display:block;max-width:100%;max-height:50vh"><div id="cr" style="position:absolute;border:3px solid #1d6b52;box-shadow:0 0 0 9999px rgba(0,0,0,.45);cursor:move"></div></div>'+
+          '<div class="grid2" style="margin-top:8px"><button class="btn" data-rot>↻ 回転</button><button class="btn primary" data-go>この範囲を読み取る</button></div>';
+        var ci=$('#ci',cv),cw=$('#cw',cv),cr=$('#cr',cv);
+        ci.src=src.toDataURL('image/jpeg',0.85);
+        ['nw','ne','sw','se'].forEach(function(k){var h=document.createElement('div');h.dataset.h=k;h.style.cssText='position:absolute;width:30px;height:30px;border-radius:50%;background:#1d6b52;border:3px solid #fff;touch-action:none;'+(k[0]==='n'?'top:-15px;':'bottom:-15px;')+(k[1]==='w'?'left:-15px;':'right:-15px;');cr.appendChild(h)});
+        function place(){cr.style.left=f.x*100+'%';cr.style.top=f.y*100+'%';cr.style.width=f.w*100+'%';cr.style.height=f.h*100+'%'}
+        place();
+        var drag=null;
+        cw.addEventListener('pointerdown',function(e){
+          var t=e.target,h=t.dataset&&t.dataset.h;
+          if(!h&&t!==cr)return;
+          e.preventDefault();var R=cw.getBoundingClientRect();
+          drag={h:h||'mv',x:e.clientX,y:e.clientY,f:{x:f.x,y:f.y,w:f.w,h:f.h},W:R.width,H:R.height};
+          try{cw.setPointerCapture(e.pointerId)}catch(x){}
+        });
+        cw.addEventListener('pointermove',function(e){
+          if(!drag)return;e.preventDefault();
+          var dx=(e.clientX-drag.x)/drag.W,dy=(e.clientY-drag.y)/drag.H,o=drag.f,n={x:o.x,y:o.y,w:o.w,h:o.h},m=.06;
+          function cl(v,a,b){return v<a?a:v>b?b:v}
+          if(drag.h==='mv'){n.x=cl(o.x+dx,0,1-o.w);n.y=cl(o.y+dy,0,1-o.h)}
+          else{
+            if(drag.h[1]==='w'){var nx=cl(o.x+dx,0,o.x+o.w-m);n.w=o.x+o.w-nx;n.x=nx}else{n.w=cl(o.w+dx,m,1-o.x)}
+            if(drag.h[0]==='n'){var ny=cl(o.y+dy,0,o.y+o.h-m);n.h=o.y+o.h-ny;n.y=ny}else{n.h=cl(o.h+dy,m,1-o.y)}
+          }
+          f=n;place();
+        });
+        function end(){drag=null}
+        cw.addEventListener('pointerup',end);cw.addEventListener('pointercancel',end);
+        $('[data-rot]',cv).onclick=function(){src=rotateCanvas(src);f={x:.05,y:.05,w:.9,h:.9};drawCrop()};
+        $('[data-go]',cv).onclick=function(){
+          var crop=cropCanvas(src,f),pv=crop.toDataURL('image/jpeg',0.8);
+          cv.innerHTML='<img src="'+pv+'" alt="読み取る範囲" style="max-width:100%;max-height:160px;border-radius:10px;border:1px solid var(--line)"><p class="note" style="margin:4px 0 0">この範囲を読み取りました。写真の数字と、下の結果を見比べてください。</p><button class="btn sm" data-again style="margin-top:6px">範囲を選び直す</button>';
+          $('[data-again]',cv).onclick=drawCrop;
+          pn.textContent='文字を読み取り中です…（初めてのときは、準備で少し時間がかかります）';
+          ocrCanvas(crop,function(m){pn.textContent=m}).then(function(text){
+            text=cleanOcr(text);
+            $('#paste',b).value=text;
+            $('[data-parse]',b).click();
+            var pn2=$('#pn',b),fail=pn2.textContent.indexOf('見つかりませんでした')>=0,warn=ocrWarn(text);
+            pn2.textContent=fail?'数字を読み取れませんでした。枠を栄養成分表示の表だけに絞るか、「回転」で向きを直して、もう一度お試しください。それでも難しい場合は、下の欄に数字を直接入れてください。':'写真から読み取りました。小数点が抜けることがあるので、写真の数字と必ず見比べてください。 '+pn2.textContent+(warn?' ⚠ '+warn:'');
+          }).catch(function(){pn.textContent='読み取りに失敗しました。通信が切れていないか確認して、もう一度お試しください。'});
+        };
+      }
+      pn.textContent='';
+      drawCrop();
+    }).catch(function(){pn.textContent='写真を開けませんでした。別の写真でお試しください。'});
   }
   $('[data-cam]',b).onclick=function(){$('#camf',b).value='';$('#camf',b).click()};
   $('[data-pic]',b).onclick=function(){$('#picf',b).value='';$('#picf',b).click()};
